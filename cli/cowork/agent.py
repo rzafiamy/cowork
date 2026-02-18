@@ -25,7 +25,12 @@ from .theme import (
     TELEMETRY_STEPS,
     TOOL_ERROR_PREFIX,
 )
-from .tools import ExecutionGateway, ToolExecutor, get_tools_for_categories
+from .tools import (
+    ExecutionGateway,
+    ToolExecutor,
+    get_available_tools_for_categories,
+    get_tools_for_categories,
+)
 
 # ─── Agent System Prompt ──────────────────────────────────────────────────────
 
@@ -291,8 +296,13 @@ class GeneralPurposeAgent:
         self.status_cb("🧠  Retrieving memory context...")
         memory_context = self.memoria.get_fused_context(processed_input)
 
-        # ── Build Tool Schema ─────────────────────────────────────────────────
-        tools_schema = get_tools_for_categories(categories)
+        # ── Build Tool Schema (Filters out unconfigured paid tools) ───────────
+        tools_schema = get_available_tools_for_categories(categories)
+
+        if tools_schema:
+            premium_tools = [t["function"]["name"] for t in tools_schema if t["category"] in categories and t["category"] != "CONVERSATIONAL"]
+            if premium_tools:
+                self.status_cb(f"🔌 Enabled {len(premium_tools)} tool(s) for this task.")
 
         # ── Build System Prompt ───────────────────────────────────────────────
         system_prompt = AGENT_SYSTEM_PROMPT.format(

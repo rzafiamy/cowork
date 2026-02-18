@@ -11,7 +11,7 @@ from .theme import CATEGORY_STYLES, OP_DEFAULTS
 
 # ─── Classification Domains ───────────────────────────────────────────────────
 DOMAINS = [
-    "SEARCH_AND_INFO",
+    # ── Built-in ──────────────────────────────────────────────────────────────
     "MEDIA_AND_ENTERTAINMENT",
     "VISION",
     "DATA_AND_UTILITY",
@@ -19,6 +19,15 @@ DOMAINS = [
     "APP_CONNECTORS",
     "CONVERSATIONAL",
     "ALL_TOOLS",
+    # ── External (Paid API) ───────────────────────────────────────────────────
+    "YOUTUBE_TOOLS",    # YouTube Search, Transcript, Metadata (YouTube Data API v3)
+    "SEARCH_TOOLS",     # Google Search (SerpAPI), Brave Search
+    "WEB_TOOLS",        # Firecrawl scrape & crawl
+    "NEWS_TOOLS",       # NewsAPI headlines & search
+    "CODE_TOOLS",       # GitHub repository/code/issue search
+    "WEATHER_TOOLS",    # OpenWeatherMap current + forecast
+    "MEDIA_TOOLS",      # TMDB movie/TV search & details
+    "KNOWLEDGE_TOOLS",  # Wikipedia search & full article
 ]
 
 # ─── Router System Prompt ─────────────────────────────────────────────────────
@@ -26,8 +35,15 @@ ROUTER_SYSTEM_PROMPT = """You are a Meta-Router for an enterprise AI agent syste
 Your ONLY job is to classify the user's intent and return the relevant tool categories.
 
 Available categories:
-- SEARCH_AND_INFO: Web search, Wikipedia, URL scraping, weather, real-time data
-- MEDIA_AND_ENTERTAINMENT: Images, YouTube, movies
+- SEARCH_TOOLS: Premium Google Search (SerpAPI) or Brave Search — use for ANY web research or fact-finding
+- KNOWLEDGE_TOOLS: Wikipedia article search and full-text retrieval — use for deep research on specific topics
+- YOUTUBE_TOOLS: YouTube video search, transcripts, video metadata
+- WEB_TOOLS: Firecrawl — use to scrape or read specific websites/URLs provided by the user
+- WEATHER_TOOLS: OpenWeatherMap current conditions and multi-day forecasts
+- NEWS_TOOLS: News headlines and article search (NewsAPI)
+- CODE_TOOLS: GitHub repository, code, and issue search
+- MEDIA_AND_ENTERTAINMENT: Images, movies (general), general media
+- MEDIA_TOOLS: TMDB movie/TV show search and detailed info (cast, ratings, etc.)
 - VISION: Image analysis, OCR
 - DATA_AND_UTILITY: Math calculations, charts, diagrams, time/date
 - SESSION_SCRATCHPAD: Storing/retrieving large data within the session
@@ -42,6 +58,11 @@ Rules:
 - Return CONVERSATIONAL for greetings, opinions, or simple questions answerable from training data
 - Return 1-3 categories maximum (except ALL_TOOLS)
 - Prefer specific categories over ALL_TOOLS
+- Use SEARCH_TOOLS for general questions needing live data
+- Use KNOWLEDGE_TOOLS for "Who is", "What is", "History of" queries
+- Use WEB_TOOLS when the user provides a specific link to read
+- Use YOUTUBE_TOOLS for anything YouTube-related
+- Use MEDIA_TOOLS for specialized movie/TV queries
 - Return ALL_TOOLS only when truly ambiguous"""
 
 ROUTER_USER_TEMPLATE = "Classify this user request: {prompt}"
@@ -100,18 +121,38 @@ class MetaRouter:
         p = prompt.lower()
         categories = []
 
-        if any(w in p for w in ["search", "find", "look up", "what is", "who is", "when did", "weather", "news"]):
-            categories.append("SEARCH_AND_INFO")
-        if any(w in p for w in ["calculate", "compute", "math", "formula", "equation", "time", "date", "diagram", "chart"]):
-            categories.append("DATA_AND_UTILITY")
-        if any(w in p for w in ["save", "store", "remember", "scratchpad", "ref:"]):
-            categories.append("SESSION_SCRATCHPAD")
-        if any(w in p for w in ["note", "task", "kanban", "calendar", "event", "file", "write"]):
-            categories.append("APP_CONNECTORS")
-        if any(w in p for w in ["image", "picture", "photo", "video", "youtube", "movie"]):
-            categories.append("MEDIA_AND_ENTERTAINMENT")
-        if any(w in p for w in ["analyze", "look at", "describe", "vision", "ocr"]):
-            categories.append("VISION")
+        # External tool keywords (checked first for specificity)
+        if any(w in p for w in ["youtube", "yt ", "video transcript", "youtube search", "youtube metadata"]):
+            categories.append("YOUTUBE_TOOLS")
+        if any(w in p for w in ["google search", "serpapi", "brave search", "search google"]):
+            categories.append("SEARCH_TOOLS")
+        if any(w in p for w in ["firecrawl", "scrape", "crawl", "website content", "extract from url"]):
+            categories.append("WEB_TOOLS")
+        if any(w in p for w in ["news", "headlines", "breaking news", "newsapi", "latest news"]):
+            categories.append("NEWS_TOOLS")
+        if any(w in p for w in ["github", "repository", "open source", "code search", "pull request", "issue"]):
+            categories.append("CODE_TOOLS")
+        if any(w in p for w in ["weather", "forecast", "temperature", "humidity", "openweather", "rain", "snow", "wind"]):
+            categories.append("WEATHER_TOOLS")
+        if any(w in p for w in ["movie", "film", "tv show", "series", "tmdb", "cast", "director", "imdb", "actor", "actress"]):
+            categories.append("MEDIA_TOOLS")
+        if any(w in p for w in ["wikipedia", "wiki article", "encyclopedia", "who was", "what is the history"]):
+            categories.append("KNOWLEDGE_TOOLS")
+
+        # Built-in tool keywords
+        if not categories:
+            if any(w in p for w in ["search", "find", "look up", "what is", "who is", "when did", "weather"]):
+                categories.append("SEARCH_AND_INFO")
+            if any(w in p for w in ["calculate", "compute", "math", "formula", "equation", "time", "date", "diagram", "chart"]):
+                categories.append("DATA_AND_UTILITY")
+            if any(w in p for w in ["save", "store", "remember", "scratchpad", "ref:"]):
+                categories.append("SESSION_SCRATCHPAD")
+            if any(w in p for w in ["note", "task", "kanban", "calendar", "event", "file", "write"]):
+                categories.append("APP_CONNECTORS")
+            if any(w in p for w in ["image", "picture", "photo", "movie"]):
+                categories.append("MEDIA_AND_ENTERTAINMENT")
+            if any(w in p for w in ["analyze", "look at", "describe", "vision", "ocr"]):
+                categories.append("VISION")
 
         if not categories:
             # Check if it's conversational

@@ -80,6 +80,21 @@ class ConfigManager:
             self._data["api_endpoint"] = os.getenv("COWORK_API_ENDPOINT", "")
         if os.getenv("COWORK_MODEL"):
             self._data["model_text"] = os.getenv("COWORK_MODEL", "")
+        # ── External Tool API Keys (loaded from .env, stored in memory only) ──
+        _ext_keys = [
+            "YOUTUBE_API_KEY",
+            "SERPAPI_KEY",
+            "BRAVE_SEARCH_API_KEY",
+            "FIRECRAWL_API_KEY",
+            "NEWSAPI_KEY",
+            "GITHUB_TOKEN",
+            "OPENWEATHER_API_KEY",
+            "TMDB_API_KEY",
+        ]
+        for _k in _ext_keys:
+            val = os.getenv(_k)
+            if val:
+                self._data[_k] = val
 
     def save(self) -> None:
         with open(CONFIG_FILE, "w") as f:

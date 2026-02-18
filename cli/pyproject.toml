@@ -30,6 +30,8 @@ dependencies = [
     "pydantic>=2.0",
     "prompt_toolkit>=3.0",
     "aiohttp>=3.8",
+    # YouTube transcript (no API key required — always available)
+    "youtube-transcript-api>=0.6",
 ]
 
 # ── Optional: local RAG stack (no external vector DB, no API for embeddings) ──
@@ -41,9 +43,27 @@ local-rag = [
     "torch>=2.0; platform_machine != 'arm64'",  # CPU torch for x86/x64
 ]
 
+# ── Optional: all paid external tools ─────────────────────────────────────────
+# Install with: pip install "cowork[tools]"
+# Note: API keys must still be set in .env — these are just the Python packages.
+tools = [
+    "youtube-transcript-api>=0.6",  # YouTube transcripts (no key needed)
+    # All other tools use only stdlib urllib — no extra packages required!
+]
+
+# ── Optional: everything ───────────────────────────────────────────────────────
+# Install with: pip install "cowork[all]"
+all = [
+    "sqlite-vec>=0.1.6",
+    "sentence-transformers>=3.0",
+    "torch>=2.0; platform_machine != 'arm64'",
+    "youtube-transcript-api>=0.6",
+]
+
 [project.scripts]
 cowork = "cowork.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["cowork*"]
+

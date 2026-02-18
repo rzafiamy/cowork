@@ -13,71 +13,16 @@ from typing import Any, Callable, Optional
 
 from .config import Scratchpad
 from .theme import GATEWAY_ERROR_PREFIX, TOOL_ERROR_PREFIX, OP_DEFAULTS
+from .tools_external import (
+    EXTERNAL_TOOLS,
+    execute_external_tool,
+    get_all_external_tools,
+    get_available_external_tools,
+    EXTERNAL_TOOL_HANDLERS,
+)
 
 # ─── Tool Schema Definitions ──────────────────────────────────────────────────
 ALL_TOOLS: list[dict] = [
-    # ── SEARCH_AND_INFO ──────────────────────────────────────────────────────
-    {
-        "category": "SEARCH_AND_INFO",
-        "type": "function",
-        "function": {
-            "name": "web_search",
-            "description": "Search the web for real-time information. Use for current events, facts, and research.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "The search query"},
-                    "freshness": {"type": "string", "description": "Date restriction: 24h, 1wk, 1mo", "enum": ["24h", "1wk", "1mo"]},
-                },
-                "required": ["query"],
-            },
-        },
-    },
-    {
-        "category": "SEARCH_AND_INFO",
-        "type": "function",
-        "function": {
-            "name": "wiki_get",
-            "description": "Fetch a Wikipedia article summary and key facts.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "topic": {"type": "string", "description": "The Wikipedia topic to look up"},
-                },
-                "required": ["topic"],
-            },
-        },
-    },
-    {
-        "category": "SEARCH_AND_INFO",
-        "type": "function",
-        "function": {
-            "name": "scrape_urls",
-            "description": "Fetch and extract text content from one or more URLs.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "urls": {"type": "array", "items": {"type": "string"}, "description": "List of URLs to scrape"},
-                },
-                "required": ["urls"],
-            },
-        },
-    },
-    {
-        "category": "SEARCH_AND_INFO",
-        "type": "function",
-        "function": {
-            "name": "get_weather",
-            "description": "Get current weather for a location.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "location": {"type": "string", "description": "City name or coordinates"},
-                },
-                "required": ["location"],
-            },
-        },
-    },
     # ── DATA_AND_UTILITY ─────────────────────────────────────────────────────
     {
         "category": "DATA_AND_UTILITY",
@@ -237,6 +182,11 @@ ALL_TOOLS: list[dict] = [
     },
 ]
 
+# ─── Merge External (Paid API) Tools ─────────────────────────────────────────
+# External tools are always registered in the schema so the AI knows about them.
+# At runtime, tools whose keys are missing return a friendly error message.
+ALL_TOOLS.extend(EXTERNAL_TOOLS)
+
 # ─── Category → Tool Name Mapping ────────────────────────────────────────────
 CATEGORY_TOOL_MAP: dict[str, list[str]] = {}
 for _tool in ALL_TOOLS:
@@ -245,6 +195,13 @@ for _tool in ALL_TOOLS:
 
 # ─── Tool Lookup ──────────────────────────────────────────────────────────────
 TOOL_BY_NAME: dict[str, dict] = {t["function"]["name"]: t for t in ALL_TOOLS}
+
+# ─── External Tool Categories ─────────────────────────────────────────────────
+EXTERNAL_CATEGORIES = {
+    "YOUTUBE_TOOLS", "SEARCH_TOOLS", "WEB_TOOLS",
+    "NEWS_TOOLS", "CODE_TOOLS", "WEATHER_TOOLS",
+    "MEDIA_TOOLS", "KNOWLEDGE_TOOLS",
+}
 
 
 def get_tools_for_categories(categories: list[str]) -> list[dict]:
@@ -261,6 +218,24 @@ def get_tools_for_categories(categories: list[str]) -> list[dict]:
             if tool["category"] == cat and name not in seen:
                 result.append(tool)
                 seen.add(name)
+    return result
+
+
+def get_available_tools_for_categories(categories: list[str]) -> list[dict]:
+    """
+    Like get_tools_for_categories but for external categories only returns
+    tools whose API keys are actually configured.
+    """
+    available_external_names = {t["function"]["name"] for t in get_available_external_tools()}
+    all_for_cats = get_tools_for_categories(categories)
+    result = []
+    for tool in all_for_cats:
+        name = tool["function"]["name"]
+        cat = tool["category"]
+        # For external categories, only include if key is available
+        if cat in EXTERNAL_CATEGORIES and name not in available_external_names:
+            continue
+        result.append(tool)
     return result
 
 
@@ -382,11 +357,19 @@ class ToolExecutor:
         """Execute a tool and return its result string."""
         self._tool_call_count += 1
         try:
+            # Check built-in tools first
             handler = getattr(self, f"_tool_{tool_name}", None)
-            if handler is None:
-                return f"{TOOL_ERROR_PREFIX} Tool '{tool_name}' has no executor. [HINT]: Use only tools available in your schema."
-            result = handler(**args)
-            return self._clamp_output(tool_name, str(result))
+            if handler is not None:
+                result = handler(**args)
+                return self._clamp_output(tool_name, str(result))
+
+            # Fall back to external tools
+            if tool_name in EXTERNAL_TOOL_HANDLERS:
+                self._emit(f"🔌 Calling external tool: {tool_name}...")
+                result = execute_external_tool(tool_name, args)
+                return self._clamp_output(tool_name, str(result))
+
+            return f"{TOOL_ERROR_PREFIX} Tool '{tool_name}' has no executor. [HINT]: Use only tools available in your schema."
         except Exception as e:
             return f"{TOOL_ERROR_PREFIX} Execution failed: {e}. [HINT]: Check if parameters are correct or try an alternative tool."
 
@@ -416,86 +399,14 @@ class ToolExecutor:
             f"Unix timestamp: {int(now.timestamp())}"
         )
 
-    def _tool_web_search(self, query: str, freshness: str = "1wk") -> str:
-        self._emit(f"🌍 Searching the web for: '{query}'...")
-        try:
-            import urllib.request
-            encoded = urllib.parse.quote_plus(query)
-            url = f"https://html.duckduckgo.com/html/?q={encoded}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                html = resp.read().decode("utf-8", errors="ignore")
-            # Extract results
-            results = re.findall(r'<a class="result__a"[^>]*href="([^"]+)"[^>]*>([^<]+)</a>', html)
-            snippets = re.findall(r'<a class="result__snippet"[^>]*>([^<]+)</a>', html)
-            if not results:
-                return f"No results found for '{query}'. Try rephrasing your query."
-            output_lines = [f"Web search results for: '{query}'\n"]
-            for i, (href, title) in enumerate(results[:5]):
-                snippet = snippets[i] if i < len(snippets) else ""
-                output_lines.append(f"{i+1}. **{title.strip()}**\n   URL: {href}\n   {snippet.strip()}\n")
-            return "\n".join(output_lines)
-        except Exception as e:
-            return f"Web search failed: {e}. [HINT]: Check network connectivity or try wiki_get as fallback."
-
-    def _tool_wiki_get(self, topic: str) -> str:
-        self._emit(f"📖 Fetching Wikipedia article: '{topic}'...")
-        try:
-            import urllib.request
-            encoded = urllib.parse.quote(topic.replace(" ", "_"))
-            url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{encoded}"
-            req = urllib.request.Request(url, headers={"User-Agent": "CoworkCLI/1.0"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode())
-            title = data.get("title", topic)
-            extract = data.get("extract", "No summary available.")
-            page_url = data.get("content_urls", {}).get("desktop", {}).get("page", "")
-            return f"**{title}**\n\n{extract}\n\nSource: {page_url}"
-        except Exception as e:
-            return f"Wikipedia lookup failed: {e}. [HINT]: Try web_search as an alternative."
-
-    def _tool_scrape_urls(self, urls: list) -> str:
-        self._emit(f"🔗 Scraping {len(urls)} URL(s)...")
-        results = []
-        for url in urls[:3]:  # Limit to 3 URLs
-            try:
-                import urllib.request
-                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    html = resp.read().decode("utf-8", errors="ignore")
-                # Strip HTML tags
-                text = re.sub(r"<[^>]+>", " ", html)
-                text = re.sub(r"\s+", " ", text).strip()
-                results.append(f"URL: {url}\n\n{text[:3000]}")
-            except Exception as e:
-                results.append(f"URL: {url}\nError: {e}")
-        return "\n\n---\n\n".join(results)
-
     def _tool_get_weather(self, location: str) -> str:
-        self._emit(f"🌤️  Fetching weather for: '{location}'...")
-        try:
-            import urllib.request
-            encoded = urllib.parse.quote(location)
-            url = f"https://wttr.in/{encoded}?format=j1"
-            req = urllib.request.Request(url, headers={"User-Agent": "CoworkCLI/1.0"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode())
-            current = data["current_condition"][0]
-            desc = current["weatherDesc"][0]["value"]
-            temp_c = current["temp_C"]
-            temp_f = current["temp_F"]
-            humidity = current["humidity"]
-            wind_kmph = current["windspeedKmph"]
-            feels_c = current["FeelsLikeC"]
-            return (
-                f"Weather in **{location}**:\n"
-                f"• Condition: {desc}\n"
-                f"• Temperature: {temp_c}°C / {temp_f}°F (Feels like {feels_c}°C)\n"
-                f"• Humidity: {humidity}%\n"
-                f"• Wind: {wind_kmph} km/h"
-            )
-        except Exception as e:
-            return f"Weather fetch failed: {e}. [HINT]: Try a different location format (e.g., 'Paris' or 'New York')."
+        self._emit(f"�️  Fetching weather for: '{location}'...")
+        # Redirect to premium tool if available, otherwise suggest .env setup
+        from .tools_external import _env
+        if _env("OPENWEATHER_API_KEY"):
+            return self.execute("openweather_current", {"location": location})
+        return "❌ Legacy `get_weather` is disabled. [HINT]: Add `OPENWEATHER_API_KEY` to `.env` to use premium weather tools."
+
 
     def _tool_gen_diagram(self, diagram_type: str, description: str) -> str:
         self._emit(f"📐 Generating {diagram_type} diagram...")
