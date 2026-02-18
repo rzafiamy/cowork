@@ -1,13 +1,22 @@
 """
 🧠 Memoria: Hybrid Long-Term Memory System
 Implements the Knowledge Graph + Session Summary memory framework.
-Uses local JSON storage (no external vector DB required for CLI).
+
+Storage:  Local SQLite (no external DB)
+Vectors:  sqlite-vec extension (local KNN search)
+Embedder: sentence-transformers all-MiniLM-L6-v2 (22 MB, CPU-friendly)
+Fallback: keyword overlap when deps are unavailable
 """
+
+from __future__ import annotations
 
 import json
 import math
 import re
+import sqlite3
+import struct
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -15,19 +24,25 @@ from typing import Any, Optional
 from .config import CONFIG_DIR
 from .theme import OP_DEFAULTS
 
+# ─── Paths ────────────────────────────────────────────────────────────────────
+
 MEMORIA_DIR = CONFIG_DIR / "memoria"
 MEMORIA_DIR.mkdir(exist_ok=True)
+MEMORIA_DB = MEMORIA_DIR / "memoria.db"
+
+# ─── Embedding dimension for all-MiniLM-L6-v2 ────────────────────────────────
+EMBED_DIM = 384
 
 # ─── Prompts ──────────────────────────────────────────────────────────────────
 
 TRIPLET_EXTRACTION_PROMPT = """Extract factual knowledge triplets from the following user message.
-Return ONLY a JSON array of triplets. Each triplet must have: subject, predicate, object.
+Return ONLY a JSON object with a key 'triplets' containing an array of triplets. Each triplet must have: subject, predicate, object.
 Focus on facts about the user, their preferences, goals, and context.
-If there are no extractable facts, return an empty array [].
+If there are no extractable facts, return {{"triplets": []}}.
 
 Message: {message}
 
-Return format: [{{"subject": "...", "predicate": "...", "object": "..."}}]"""
+Return format: {{"triplets": [{{"subject": "...", "predicate": "...", "object": "..."}}]}}"""
 
 SESSION_SUMMARY_PROMPT = """Update the session summary with the latest interaction.
 
@@ -52,15 +67,146 @@ CONTEXT_FUSION_TEMPLATE = """📝 SESSION CONTEXT:
 {triplets}"""
 
 
+# ─── Local Embedder ───────────────────────────────────────────────────────────
+
+class _LocalEmbedder:
+    """
+    Lazy-loaded sentence-transformers embedder.
+    Uses all-MiniLM-L6-v2: 22 MB, 384-dim, CPU-friendly, ~5ms/sentence.
+    Falls back to None if sentence-transformers is not installed.
+    """
+
+    _instance: Optional["_LocalEmbedder"] = None
+    _model: Any = None
+    _available: Optional[bool] = None
+
+    @classmethod
+    def get(cls) -> Optional["_LocalEmbedder"]:
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance if cls._available else None
+
+    def __init__(self) -> None:
+        if _LocalEmbedder._available is not None:
+            return
+        try:
+            from sentence_transformers import SentenceTransformer  # type: ignore
+            _LocalEmbedder._model = SentenceTransformer(
+                "all-MiniLM-L6-v2",
+                device="cpu",
+            )
+            _LocalEmbedder._available = True
+        except ImportError:
+            _LocalEmbedder._available = False
+        except Exception:
+            _LocalEmbedder._available = False
+
+    def encode(self, text: str) -> Optional[bytes]:
+        """Return float32 bytes (384 floats) or None on failure."""
+        if not _LocalEmbedder._available or _LocalEmbedder._model is None:
+            return None
+        try:
+            vec = _LocalEmbedder._model.encode(text, normalize_embeddings=True)
+            return struct.pack(f"{EMBED_DIM}f", *vec.tolist())
+        except Exception:
+            return None
+
+    @staticmethod
+    def cosine_from_bytes(a: bytes, b: bytes) -> float:
+        """Compute cosine similarity between two float32 byte blobs."""
+        try:
+            va = struct.unpack(f"{EMBED_DIM}f", a)
+            vb = struct.unpack(f"{EMBED_DIM}f", b)
+            dot = sum(x * y for x, y in zip(va, vb))
+            na = math.sqrt(sum(x * x for x in va))
+            nb = math.sqrt(sum(x * x for x in vb))
+            if na == 0 or nb == 0:
+                return 0.0
+            return dot / (na * nb)
+        except Exception:
+            return 0.0
+
+
+# ─── SQLite Store ─────────────────────────────────────────────────────────────
+
+def _open_db() -> tuple[sqlite3.Connection, bool]:
+    """
+    Open (or create) the Memoria SQLite database.
+    Tries to load sqlite-vec for KNN search; falls back to plain SQLite.
+    """
+    conn = sqlite3.connect(str(MEMORIA_DB))
+    conn.row_factory = sqlite3.Row
+
+    vec_available = False
+
+    # Try loading sqlite-vec extension
+    try:
+        import sqlite_vec  # type: ignore
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        vec_available = True
+        conn.enable_load_extension(False)
+    except Exception:
+        pass  # Will use manual cosine fallback
+
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS kg_triplets (
+            id          TEXT PRIMARY KEY,
+            user_id     TEXT NOT NULL,
+            subject     TEXT NOT NULL,
+            predicate   TEXT NOT NULL,
+            object      TEXT NOT NULL,
+            embedding   BLOB,
+            created_at  TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_kg_user ON kg_triplets(user_id);
+
+        CREATE TABLE IF NOT EXISTS session_summaries (
+            session_id  TEXT PRIMARY KEY,
+            summary     TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
+    """)
+
+    if vec_available:
+        try:
+            conn.execute(f"""
+                CREATE VIRTUAL TABLE IF NOT EXISTS kg_vec
+                USING vec0(
+                    id TEXT PRIMARY KEY,
+                    embedding float[{EMBED_DIM}]
+                );
+            """)
+        except Exception:
+            vec_available = False
+
+    conn.commit()
+    return conn, vec_available
+
+
+# ─── Memoria ──────────────────────────────────────────────────────────────────
+
 class Memoria:
     """
     Hybrid memory system combining:
-    - Knowledge Graph (triplets) stored as local JSON
+    - Knowledge Graph (triplets) in local SQLite
+    - Local vector search via sqlite-vec (or manual cosine fallback)
     - Session summaries for rolling conversation context
     - EWA temporal decay for relevance weighting
+
+    Zero external dependencies required at runtime:
+      • With sentence-transformers + sqlite-vec → full semantic search
+      • Without → keyword overlap fallback (same as before)
     """
 
-    def __init__(self, user_id: str, session_id: str, api_client: Any, config: Any) -> None:
+    def __init__(
+        self,
+        user_id: str,
+        session_id: str,
+        api_client: Any,
+        config: Any,
+    ) -> None:
         self.user_id = user_id
         self.session_id = session_id
         self.api_client = api_client
@@ -68,45 +214,29 @@ class Memoria:
         self.decay_rate = config.get("decay_rate", OP_DEFAULTS["decay_rate"])
         self.top_k = config.get("top_k_memories", OP_DEFAULTS["top_k_memories"])
 
-        # Storage paths
-        self._kg_path = MEMORIA_DIR / f"kg_{user_id}.json"
-        self._summary_path = MEMORIA_DIR / f"summary_{session_id}.json"
-
-        self._kg: list[dict] = self._load_kg()
+        self._db, self._vec_available = _open_db()
+        self._embedder = _LocalEmbedder.get()
         self._summary: str = self._load_summary()
 
-    # ── Storage I/O ───────────────────────────────────────────────────────────
-
-    def _load_kg(self) -> list[dict]:
-        if self._kg_path.exists():
-            try:
-                with open(self._kg_path) as f:
-                    return json.load(f)
-            except Exception:
-                pass
-        return []
-
-    def _save_kg(self) -> None:
-        with open(self._kg_path, "w") as f:
-            json.dump(self._kg, f, indent=2)
+    # ── Storage helpers ───────────────────────────────────────────────────────
 
     def _load_summary(self) -> str:
-        if self._summary_path.exists():
-            try:
-                with open(self._summary_path) as f:
-                    data = json.load(f)
-                return data.get("summary", "")
-            except Exception:
-                pass
-        return ""
+        row = self._db.execute(
+            "SELECT summary FROM session_summaries WHERE session_id = ?",
+            (self.session_id,),
+        ).fetchone()
+        return row["summary"] if row else ""
 
     def _save_summary(self) -> None:
-        with open(self._summary_path, "w") as f:
-            json.dump({
-                "session_id": self.session_id,
-                "summary": self._summary,
-                "updated_at": datetime.utcnow().isoformat(),
-            }, f, indent=2)
+        self._db.execute(
+            """INSERT INTO session_summaries(session_id, summary, updated_at)
+               VALUES(?, ?, ?)
+               ON CONFLICT(session_id) DO UPDATE SET
+                 summary = excluded.summary,
+                 updated_at = excluded.updated_at""",
+            (self.session_id, self._summary, datetime.utcnow().isoformat()),
+        )
+        self._db.commit()
 
     # ── Read Path ─────────────────────────────────────────────────────────────
 
@@ -122,7 +252,7 @@ class Memoria:
             return ""
 
         triplet_lines = []
-        for t in triplets[:self.top_k]:
+        for t in triplets[: self.top_k]:
             weight = t.get("weight", 0.5)
             triplet_lines.append(
                 f"  • {t['subject']} {t['predicate']} {t['object']} (relevance: {weight:.2f})"
@@ -138,37 +268,105 @@ class Memoria:
 
     def _get_weighted_triplets(self, query: str) -> list[dict]:
         """
-        Semantic search via keyword matching + EWA temporal decay.
-        (Local implementation — no vector DB required.)
+        Semantic search with EWA temporal decay.
+
+        Strategy (in priority order):
+          1. sqlite-vec KNN  — if extension loaded + embeddings stored
+          2. Manual cosine   — if embeddings stored but no sqlite-vec
+          3. Keyword overlap — always available as final fallback
         """
-        if not self._kg:
+        now = datetime.utcnow()
+        query_vec = self._embedder.encode(query) if self._embedder else None
+
+        # 1. Attempt sqlite-vec search first (efficient for scale)
+        if query_vec and self._vec_available:
+            try:
+                # Get more candidates than top_k because decay might re-rank later additions
+                limit = self.top_k * 10
+                res = self._db.execute(f"""
+                    SELECT
+                        t.id, t.subject, t.predicate, t.object, t.embedding, t.created_at,
+                        v.distance
+                    FROM kg_triplets t
+                    JOIN kg_vec v ON t.id = v.id
+                    WHERE t.user_id = ?
+                      AND v.embedding MATCH ?
+                    ORDER BY v.distance
+                    LIMIT ?
+                """, (self.user_id, query_vec, limit)).fetchall()
+
+                if res:
+                    weighted = []
+                    for row in res:
+                        # Convert distance to similarity (approximate)
+                        # distance is square Euclidean for float vec in sqlite-vec by default
+                        # or cosine distance if specified.
+                        similarity = 1.0 / (1.0 + row["distance"])
+                        
+                        try:
+                            created_at = datetime.fromisoformat(row["created_at"])
+                        except Exception:
+                            created_at = now
+                        delta_min = (now - created_at).total_seconds() / 60.0
+                        weight = similarity * math.exp(-self.decay_rate * delta_min)
+
+                        weighted.append({
+                            "id": row["id"],
+                            "subject": row["subject"],
+                            "predicate": row["predicate"],
+                            "object": row["object"],
+                            "weight": weight,
+                            "similarity": similarity,
+                        })
+                    weighted.sort(key=lambda t: t["weight"], reverse=True)
+                    return weighted
+            except Exception:
+                pass # Fallback to manual
+
+        # 2. Manual Scan (if vector search failed or unavailable)
+        rows = self._db.execute(
+            "SELECT id, subject, predicate, object, embedding, created_at "
+            "FROM kg_triplets WHERE user_id = ?",
+            (self.user_id,),
+        ).fetchall()
+
+        if not rows:
             return []
 
-        query_words = set(re.findall(r'\w+', query.lower()))
-        now = datetime.utcnow()
-        weighted = []
+        weighted: list[dict] = []
+        for row in rows:
+            triplet_text = f"{row['subject']} {row['predicate']} {row['object']}"
 
-        for triplet in self._kg:
-            # Compute keyword similarity
-            triplet_text = f"{triplet['subject']} {triplet['predicate']} {triplet['object']}".lower()
-            triplet_words = set(re.findall(r'\w+', triplet_text))
-            overlap = len(query_words & triplet_words)
-            similarity = min(1.0, overlap / max(len(query_words), 1))
+            # ── Similarity score ──────────────────────────────────────────────
+            if query_vec and row["embedding"]:
+                similarity = _LocalEmbedder.cosine_from_bytes(query_vec, row["embedding"])
+            else:
+                # Keyword fallback
+                q_words = set(re.findall(r"\w+", query.lower()))
+                t_words = set(re.findall(r"\w+", triplet_text.lower()))
+                overlap = len(q_words & t_words)
+                similarity = min(1.0, overlap / max(len(q_words), 1))
 
-            # Apply EWA temporal decay
-            created_at_str = triplet.get("created_at", now.isoformat())
+            # ── EWA temporal decay ────────────────────────────────────────────
             try:
-                created_at = datetime.fromisoformat(created_at_str)
+                created_at = datetime.fromisoformat(row["created_at"])
             except Exception:
                 created_at = now
             delta_min = (now - created_at).total_seconds() / 60.0
             weight = similarity * math.exp(-self.decay_rate * delta_min)
 
-            # Always include triplets with some relevance
             if weight > 0.001 or similarity > 0:
-                weighted.append({**triplet, "weight": weight, "similarity": similarity})
+                weighted.append(
+                    {
+                        "id": row["id"],
+                        "subject": row["subject"],
+                        "predicate": row["predicate"],
+                        "object": row["object"],
+                        "weight": weight,
+                        "similarity": similarity,
+                    }
+                )
 
-        # Sort by weight descending
         weighted.sort(key=lambda t: t["weight"], reverse=True)
         return weighted
 
@@ -183,6 +381,7 @@ class Memoria:
             return
         try:
             import asyncio
+
             await asyncio.gather(
                 self._process_triplets(user_message),
                 self._update_session_summary(user_message, assistant_response),
@@ -201,41 +400,75 @@ class Memoria:
                 response_format={"type": "json_object"},
                 max_tokens=500,
             )
-            content = result.get("content", "[]")
+            content = result.get("content", "{}")
 
             # Robust JSON parsing
             try:
                 parsed = json.loads(content)
-                if isinstance(parsed, list):
-                    triplets = parsed
-                elif isinstance(parsed, dict):
+                if isinstance(parsed, dict):
                     triplets = parsed.get("triplets", [])
+                elif isinstance(parsed, list):
+                    triplets = parsed
                 else:
                     triplets = []
             except json.JSONDecodeError:
-                # Try to extract JSON array from text
-                match = re.search(r'\[.*\]', content, re.DOTALL)
-                triplets = json.loads(match.group()) if match else []
+                # Fallback: try to find anything that looks like an array
+                match = re.search(r"\[.*\]", content, re.DOTALL)
+                try:
+                    triplets = json.loads(match.group()) if match else []
+                except Exception:
+                    triplets = []
 
-            # Insert new triplets
-            import uuid
+            if not triplets:
+                return
+
+            # Insert new triplets with local embeddings
             for t in triplets:
                 if isinstance(t, dict) and all(k in t for k in ("subject", "predicate", "object")):
-                    self._kg.append({
-                        "id": str(uuid.uuid4()),
-                        "user_id": self.user_id,
-                        "subject": str(t["subject"])[:200],
-                        "predicate": str(t["predicate"])[:200],
-                        "object": str(t["object"])[:200],
-                        "created_at": datetime.utcnow().isoformat(),
-                    })
+                    triplet_id = str(uuid.uuid4())
+                    triplet_text = (
+                        f"{t['subject']} {t['predicate']} {t['object']}"
+                    )
 
-            self._save_kg()
-        except Exception:
+                    # Generate local embedding (None if deps unavailable)
+                    embedding: Optional[bytes] = None
+                    if self._embedder:
+                        embedding = self._embedder.encode(triplet_text)
+
+                    self._db.execute(
+                        """INSERT OR IGNORE INTO kg_triplets
+                           (id, user_id, subject, predicate, object, embedding, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            triplet_id,
+                            self.user_id,
+                            str(t["subject"])[:200],
+                            str(t["predicate"])[:200],
+                            str(t["object"])[:200],
+                            embedding,
+                            datetime.utcnow().isoformat(),
+                        ),
+                    )
+
+                    # Also insert into sqlite-vec virtual table if available
+                    if embedding:
+                        try:
+                            self._db.execute(
+                                "INSERT OR IGNORE INTO kg_vec(id, embedding) VALUES (?, ?)",
+                                (triplet_id, embedding),
+                            )
+                        except Exception:
+                            pass  # sqlite-vec not loaded or failed
+
+            self._db.commit()
+        except Exception as e:
+            # We keep it non-fatal but we could log it to a file if we had a logger
             pass
 
-    async def _update_session_summary(self, user_message: str, assistant_response: str) -> None:
-        """Update the rolling session summary."""
+    async def _update_session_summary(
+        self, user_message: str, assistant_response: str
+    ) -> None:
+        """Update the rolling session summary via LLM."""
         if not assistant_response:
             return
         try:
@@ -260,21 +493,42 @@ class Memoria:
     # ── Utility ───────────────────────────────────────────────────────────────
 
     def get_triplet_count(self) -> int:
-        return len(self._kg)
+        row = self._db.execute(
+            "SELECT COUNT(*) AS n FROM kg_triplets WHERE user_id = ?",
+            (self.user_id,),
+        ).fetchone()
+        return row["n"] if row else 0
 
     def get_summary(self) -> str:
         return self._summary
 
+    def is_semantic_search_available(self) -> bool:
+        """True if BOTH local embeddings AND vector DB extension are active."""
+        return self._embedder is not None and self._vec_available
+
     def clear_session(self) -> None:
         """Clear session summary (keep KG)."""
         self._summary = ""
-        if self._summary_path.exists():
-            self._summary_path.unlink()
+        self._db.execute(
+            "DELETE FROM session_summaries WHERE session_id = ?",
+            (self.session_id,),
+        )
+        self._db.commit()
 
     def clear_all(self) -> None:
         """Clear all memory for this user."""
-        self._kg = []
+        self._db.execute(
+            "DELETE FROM kg_triplets WHERE user_id = ?", (self.user_id,)
+        )
+        self._db.execute(
+            "DELETE FROM session_summaries WHERE session_id = ?",
+            (self.session_id,),
+        )
+        try:
+            self._db.execute(
+                "DELETE FROM kg_vec WHERE id NOT IN (SELECT id FROM kg_triplets)"
+            )
+        except Exception:
+            pass
+        self._db.commit()
         self._summary = ""
-        self._save_kg()
-        if self._summary_path.exists():
-            self._summary_path.unlink()

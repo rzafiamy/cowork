@@ -32,6 +32,15 @@ dependencies = [
     "aiohttp>=3.8",
 ]
 
+# ── Optional: local RAG stack (no external vector DB, no API for embeddings) ──
+# Install with: pip install "cowork[local-rag]"
+[project.optional-dependencies]
+local-rag = [
+    "sqlite-vec>=0.1.6",                        # SQLite KNN vector search extension
+    "sentence-transformers>=3.0",               # Local embeddings (all-MiniLM-L6-v2, 22 MB)
+    "torch>=2.0; platform_machine != 'arm64'",  # CPU torch for x86/x64
+]
+
 [project.scripts]
 cowork = "cowork.main:main"
 

@@ -413,9 +413,9 @@ class GeneralPurposeAgent:
         job.steps = len([s for s in trace.steps if s["type"] == "react_step_start"])
         job.tool_calls = trace.total_tool_calls
 
-        # ── Phase 5: Background Memory Update ────────────────────────────────
-        self.status_cb("🚀  Phase 5 · Background memory ingestion...")
-        asyncio.create_task(self.memoria.update(user_input, final_response))
+        # ── Phase 5: Memory Update ───────────────────────────────────────────
+        self.status_cb("🚀  Phase 5 · Memory ingestion...")
+        await self.memoria.update(user_input, final_response)
 
         return final_response
 

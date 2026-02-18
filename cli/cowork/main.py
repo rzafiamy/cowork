@@ -526,6 +526,17 @@ def memory() -> None:
     mem = Memoria(user_id, "status_check", api_client, _config)
     render_memory_status(mem.get_triplet_count(), mem.get_summary())
 
+    # Show RAG mode
+    if mem.is_semantic_search_available():
+        console.print(
+            "  [green]🔍 Local RAG:[/green] [dim]sqlite-vec + all-MiniLM-L6-v2 (semantic search active)[/dim]"
+        )
+    else:
+        console.print(
+            "  [yellow]🔍 Local RAG:[/yellow] [dim]keyword fallback "
+            "(install sentence-transformers + sqlite-vec for semantic search)[/dim]"
+        )
+
 
 @cli.command()
 def jobs() -> None:
