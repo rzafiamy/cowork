@@ -1,0 +1,55 @@
+# 🛡️ Cowork Tool Firewall Example
+# Use this to control which tools can run and which require user confirmation.
+# Save this as ~/.cowork/firewall.yaml to customize your security policy.
+
+# Default policy: allow, block, or ask
+policy:
+  default_action: allow
+
+# Tools that ALWAYS require explicit user confirmation
+tools:
+  - name: gmail_send_email
+    action: ask
+    description: "Prevent sending unauthorized emails via Gmail"
+  
+  - name: smtp_send_email
+    action: ask
+    description: "Prevent sending unauthorized emails via SMTP"
+
+  - name: google_calendar_create_event
+    action: ask
+    description: "Confirm adding new events to your calendar"
+
+  - name: storage_write
+    action: ask
+    description: "Prevent overwriting local system files"
+
+  - name: twitter_post_tweet
+    action: ask
+    description: "Prevent accidental public tweets"
+
+  - name: google_drive_upload_text
+    action: ask
+    description: "Confirm uploading documents to Google Drive"
+
+  - name: firecrawl_scrape
+    action: ask
+    description: "Confirm scraping external website content"
+
+  - name: firecrawl_crawl
+    action: ask
+    description: "Confirm multi-page crawl of external website"
+
+# Whitelist: If defined (not commented out), ONLY these tools are allowed
+# whitelist:
+#   - calc
+#   - get_time
+#   - youtube_search
+
+# Blacklist: Tools that are strictly forbidden. They will fail with a policy error.
+blacklist:
+  # - dangerous_tool_name
+
+# Analysis: Tools that should be scrutinized (requires LLM reasoning in future)
+analyze:
+  # - wikipedia_article
