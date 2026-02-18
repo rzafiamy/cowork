@@ -48,7 +48,7 @@ class CronJob:
     def calculate_next_run(self) -> None:
         """Robust next run calculation using Regex and dynamic fallbacks."""
         import re
-        now = datetime.utcnow()
+        now = datetime.now()
         
         def find_time(val: str) -> Optional[datetime]:
             """Find HH:MM or HH:MM:SS in a string."""
@@ -146,7 +146,7 @@ class CronManager:
         return sorted(self._jobs.values(), key=lambda x: x.next_run or "")
 
     def get_pending_jobs(self) -> list[CronJob]:
-        now = datetime.utcnow().isoformat()
+        now = datetime.now().isoformat()
         pending = []
         for job in self._jobs.values():
             if job.status == CronStatus.ENABLED and job.next_run and job.next_run <= now:
@@ -156,7 +156,7 @@ class CronManager:
     def mark_run(self, job_id: str, result: Optional[str] = None) -> None:
         if job_id in self._jobs:
             job = self._jobs[job_id]
-            job.last_run = datetime.utcnow().isoformat()
+            job.last_run = datetime.now().isoformat()
             job.run_count += 1
             job.last_result = result
             

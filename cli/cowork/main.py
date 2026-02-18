@@ -110,18 +110,21 @@ async def run_agent_turn(
     status_messages: list[str] = []
     routing_info: Optional[dict] = None
 
-    def on_status(msg: str) -> None:
-        status_messages.append(msg)
-        spinner.update(msg)
-
-    def on_stream_token(token: str) -> None:
-        stream_renderer.on_token(token)
-
     # Patch router to capture routing info
     original_classify = None
 
+    def on_status(msg: str) -> None:
+        status_messages.append(msg)
+        if not unattended:
+            spinner.update(msg)
+
+    def on_stream_token(token: str) -> None:
+        if not unattended:
+            stream_renderer.on_token(token)
+
     start_time = time.time()
-    spinner.start()
+    if not unattended:
+        spinner.start()
 
     try:
         agent = GeneralPurposeAgent(
@@ -174,7 +177,8 @@ async def run_agent_turn(
         response = await agent.run(user_input, session, job)
         elapsed = time.time() - start_time
 
-        spinner.stop()
+        if not unattended:
+            spinner.stop()
 
         # Show routing info if available
         if show_routing and routing_info:
@@ -223,17 +227,57 @@ async def run_agent_turn(
         return response, job
 
     except APIError as e:
-        spinner.stop()
+        if not unattended:
+            spinner.stop()
         elapsed = time.time() - start_time
         error_msg = f"API Error after {elapsed:.1f}s: {e}"
         _job_manager.fail(job.job_id, str(e))
-        render_error(str(e), hint="Check your API key and endpoint in /config")
+        if not unattended:
+            render_error(str(e), hint="Check your API key and endpoint in /config")
         return error_msg, job
     except Exception as e:
-        spinner.stop()
+        if not unattended:
+            spinner.stop()
         _job_manager.fail(job.job_id, str(e))
-        render_error(str(e))
+        if not unattended:
+            render_error(str(e))
         return str(e), job
+
+
+async def _background_cron_poll():
+    """Periodically check and run pending cron jobs while the app is open."""
+    mgr = CronManager()
+    api_client = _make_api_client()
+    try:
+        while True:
+            pending = mgr.get_pending_jobs()
+            for job in pending:
+                # Load or create session for the job
+                session = Session.load(job.session_id) if job.session_id else Session(title=f"Cron: {job.job_id}")
+                if not session:
+                    session = Session(title=f"Cron: {job.job_id}")
+                
+                scratchpad = Scratchpad(session.session_id)
+                user_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, _config.api_key or "anonymous"))
+                memoria = Memoria(user_id, session.session_id, api_client, _config)
+
+                response, _ = await run_agent_turn(
+                    user_input=job.prompt,
+                    session=session,
+                    api_client=api_client,
+                    scratchpad=scratchpad,
+                    memoria=memoria,
+                    show_routing=False,
+                    unattended=True,
+                )
+                mgr.mark_run(job.job_id, result=response)
+                render_success(f"🔔 Background Job Completed: {job.job_id}")
+            
+            await asyncio.sleep(60)
+    except Exception:
+        pass
+    finally:
+        await api_client.close()
 
 
 # ─── Command Dispatcher ───────────────────────────────────────────────────────
@@ -599,6 +643,9 @@ async def interactive_loop(
     _memoria = Memoria(user_id, session.session_id, api_client, _config)
 
     sessions_list = Session.list_all()
+
+    # Start background scheduler
+    poll_task = asyncio.create_task(_background_cron_poll())
 
     # Show ghost job warning
     ghost_jobs = _job_manager.get_ghost_jobs()
