@@ -410,6 +410,131 @@ def render_job_dashboard(jobs: list[Any]) -> None:
     console.print(table)
 
 
+# ─── Cron Dashboard ───────────────────────────────────────────────────────────
+
+def render_cron_list(jobs: list[Any]) -> None:
+    """Render the Cron job dashboard."""
+    if not jobs:
+        console.print(Panel(
+            "[muted]No scheduled cron jobs. Tell the AI to schedule a task![/muted]",
+            title="[sentinel]⏰ Cron Scheduler[/sentinel]",
+            border_style="sentinel",
+        ))
+        return
+
+    table = Table(
+        title="⏰ Scheduled Cron Jobs",
+        box=box.ROUNDED,
+        border_style="sentinel",
+        header_style="sentinel",
+        show_lines=True,
+    )
+    table.add_column("Job ID", style="muted", width=10)
+    table.add_column("Prompt Preview", style="highlight", min_width=30)
+    table.add_column("Schedule", justify="center", style="accent")
+    table.add_column("Next Run", justify="center", style="bold_white")
+    table.add_column("Status", justify="center")
+    table.add_column("Runs", justify="center", style="muted")
+
+    status_styles = {
+        "enabled":  "[success]● active[/success]",
+        "disabled": "[muted]○ disabled[/muted]",
+        "running":  "[warning]⚡ running[/warning]",
+        "failed":   "[error]❌ failed[/error]",
+    }
+
+    for job in jobs:
+        status_display = status_styles.get(job.status, job.status)
+        prompt = job.prompt[:50] + "..." if len(job.prompt) > 50 else job.prompt
+        next_run = job.next_run[:16].replace("T", " ") if job.next_run else "—"
+        schedule = f"{job.schedule_type}: {job.schedule_value}"
+        
+        table.add_row(
+            job.job_id,
+            prompt,
+            schedule,
+            next_run,
+            status_display,
+            str(job.run_count),
+        )
+
+    console.print(table)
+
+
+def render_cron_result(job: Any) -> None:
+    """Render the full details and last result of a cron job."""
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="highlight", justify="right", width=16)
+    grid.add_column()
+    grid.add_row("Job ID", job.job_id)
+    grid.add_row("Prompt", job.prompt)
+    grid.add_row("Schedule", f"{job.schedule_type} ({job.schedule_value})")
+    grid.add_row("Last Run", job.last_run or "Never")
+    grid.add_row("Next Run", job.next_run or "Finished")
+    grid.add_row("Runs", str(job.run_count))
+    grid.add_row("Session ID", job.session_id or "—")
+
+    result_content = job.last_result or "*No result yet. Wait for the next run.*"
+    try:
+        res_md = Markdown(result_content)
+    except Exception:
+        res_md = Text(result_content)
+
+    console.print(Panel(
+        Group(grid, Rule(style="muted"), Text("Last Execution Result:", style="accent"), res_md),
+        title=f"[sentinel]⏰ Cron Job: {job.job_id}[/sentinel]",
+        border_style="sentinel",
+        padding=(1, 2),
+    ))
+
+
+# ─── Memory Dashboard ──────────────────────────────────────────────────────────
+
+def render_memory_dashboard(summary: str, triplets: list[dict]) -> None:
+    """Render a comprehensive view of the agent's memory."""
+    
+    # 1. Session Summary
+    summary_panel = Panel(
+        summary or "[muted](No session summary yet)[/muted]",
+        title="[accent]📝 Session Context Summary[/accent]",
+        border_style="accent",
+        padding=(1, 2)
+    )
+
+    # 2. Knowledge Graph Table
+    table = Table(
+        box=box.ROUNDED,
+        border_style="sentinel",
+        header_style="sentinel",
+        show_lines=True,
+        expand=True
+    )
+    table.add_column("ID", style="muted", width=10)
+    table.add_column("Subject", style="highlight")
+    table.add_column("Predicate", style="accent")
+    table.add_column("Object", style="bold_white")
+    table.add_column("Added", style="dim_text", justify="right")
+
+    for t in triplets[:30]: # Limit to 30 for display
+        added = t.get("created_at", "")[:10]
+        table.add_row(
+            t["id"][:8],
+            t["subject"],
+            t["predicate"],
+            t["object"],
+            added
+        )
+
+    kg_panel = Panel(
+        table if triplets else "[muted]No long-term persona facts found.[/muted]",
+        title=f"[sentinel]🧠 Knowledge Graph ({len(triplets)} facts)[/sentinel]",
+        border_style="sentinel",
+    )
+
+    console.print(summary_panel)
+    console.print(kg_panel)
+
+
 # ─── Token Usage Display ────────────────────────────────────────────────────────────
 
 def render_token_usage(entries: list[dict], totals: dict) -> None:
@@ -605,13 +730,18 @@ def render_help() -> None:
         ("/new",                            "Start a new session"),
         ("/sessions",                       "List all sessions"),
         ("/load <id>",                      "Load a session by ID or number"),
-        ("/memory",                         "Show Memoria status"),
-        ("/memory clear",                   "Clear all memory for current user"),
+        ("/memory",                         "Show memory dashboard (summary + facts)"),
+        ("/memory rm <id>",                 "Delete a memory fact by ID"),
+        ("/memory summarize",               "Show current session summary"),
+        ("/memory clear",                   "Clear all session and persona memory"),
         ("/jobs",                           "Show Sentinel job dashboard"),
         ("/config",                         "Show current configuration"),
         ("/config set <key> <value>",        "Update a configuration value"),
         ("/tokens",                         "Show token usage per model/endpoint"),
         ("/tokens reset",                   "Reset all token usage counters"),
+        ("/cron",                           "List all scheduled cron jobs"),
+        ("/cron view <id>",                 "View details and last execution result"),
+        ("/cron rm <id>",                   "Remove a scheduled task"),
         ("/ai",                             "List saved AI profiles"),
         ("/ai add <name> <endpoint> <model>","Add a new AI profile"),
         ("/ai switch <name>",               "Switch to a saved AI profile"),
@@ -702,13 +832,18 @@ SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/workspace list",          "List all workspace sessions"),
     ("/workspace search ",       "Search across sessions  e.g. /workspace search python"),
     ("/workspace open",          "Open workspace folder path in terminal"),
-    ("/memory",                  "Show Memoria (long-term memory) status"),
-    ("/memory clear",            "Clear all memory for current user"),
     ("/jobs",                    "Show Sentinel job queue dashboard"),
     ("/config",                  "Show current configuration"),
     ("/config set ",             "Set a config value  e.g. /config set stream false"),
     ("/tokens",                  "Show token usage per model / endpoint"),
     ("/tokens reset",            "Reset all token usage counters"),
+    ("/cron",                           "List all scheduled cron jobs"),
+    ("/cron view ",                     "View cron job result  e.g. /cron view abc12345"),
+    ("/cron rm ",                       "Remove a cron job  e.g. /cron rm abc12345"),
+    ("/memory",                         "Show memory dashboard"),
+    ("/memory rm ",                      "Delete a memory fact  e.g. /memory rm 12345678"),
+    ("/memory summarize",               "Show current session summary"),
+    ("/memory clear",                   "Wipe all persona/session memory"),
     ("/ai",                      "List saved AI profiles"),
     ("/ai add ",                 "Add AI profile  e.g. /ai add gpt4 https://api.openai.com/v1 gpt-4o"),
     ("/ai switch ",              "Switch to a profile  e.g. /ai switch gpt4"),
@@ -756,15 +891,14 @@ class CoworkCompleter(Completer):
         if text.startswith("/"):
             typed = text.lower()
             for cmd, desc in SLASH_COMMANDS:
-                if cmd.lower().startswith(typed) or typed in cmd.lower():
-                    completion_text = cmd[len(text):] if cmd.lower().startswith(typed) else cmd
+                if typed in cmd.lower():
                     display = HTML(
                         f"<b>{self._esc(cmd.rstrip())}</b>  "
                         f"<ansibrightblack>{self._esc(desc)}</ansibrightblack>"
                     )
                     yield Completion(
-                        text=completion_text,
-                        start_position=0,
+                        text=cmd,
+                        start_position=-len(text),
                         display=display,
                     )
             return
@@ -834,13 +968,12 @@ def _get_prompt_session() -> PromptSession:
 
 # ─── Input Prompt ─────────────────────────────────────────────────────────────
 
-def get_user_input(session_title: str = "New Session") -> str:
+async def get_user_input(session_title: str = "New Session") -> str:
     """
     Get user input using prompt_toolkit for:
     - '/' autocomplete with command descriptions
     - Up/Down arrow history navigation
     - '#' hashtag pill suggestions
-    - Ctrl+R incremental history search
     - Ghost text auto-suggest from history
     """
     console.print()  # blank line before prompt
@@ -854,18 +987,14 @@ def get_user_input(session_title: str = "New Session") -> str:
 
     try:
         session = _get_prompt_session()
-        user_input = session.prompt(
+        # Use prompt_async to play nice with the existing asyncio loop
+        user_input = await session.prompt_async(
             prompt_tokens,
             style=PT_STYLE,
         )
         return user_input.strip()
-    except KeyboardInterrupt:
-        return "/exit"
-    except EOFError:
+    except (KeyboardInterrupt, EOFError):
         return "/exit"
     except Exception:
-        # Fallback to plain input if prompt_toolkit fails
-        try:
-            return input(f"❯ {title_short}  ").strip()
-        except (KeyboardInterrupt, EOFError):
-            return "/exit"
+        # Final fallback - shouldn't really happen with prompt_async
+        return "/exit"

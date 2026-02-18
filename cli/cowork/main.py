@@ -28,6 +28,7 @@ from rich.rule import Rule
 from .agent import GeneralPurposeAgent
 from .api_client import APIClient, APIError
 from .config import AgentJob, AIProfileManager, ConfigManager, JobManager, Scratchpad, Session, TokenTracker
+from .cron import CronManager
 from .memoria import Memoria
 from .workspace import WorkspaceSession, workspace_manager, WORKSPACE_ROOT
 from .tools import get_all_available_tools
@@ -41,6 +42,7 @@ from .ui import (
     print_welcome,
     render_ai_profiles,
     render_config,
+    render_cron_list,
     render_error,
     render_help,
     render_job_dashboard,
@@ -84,6 +86,7 @@ async def run_agent_turn(
     scratchpad: Scratchpad,
     memoria: Memoria,
     show_routing: bool = True,
+    unattended: bool = False,
 ) -> tuple[str, AgentJob]:
     """
     Execute one full agentic turn.
@@ -141,6 +144,16 @@ async def run_agent_turn(
             return result
 
         async def on_confirm(name: str, reason: str, args: dict) -> bool:
+            if unattended:
+                # In unattended mode, we cannot ask for permission.
+                # Default to blocking 'ask' tools for safety.
+                nonlocal status_messages
+                msg = f"🛡️ [UNATTENDED] Firewall blocked tool '{name}' (reason: {reason})"
+                status_messages.append(msg)
+                if not unattended: # Double check logic flow
+                     spinner.update(msg)
+                return False
+
             # Need to stop spinner before asking
             was_running = spinner._live is not None
             if was_running:
@@ -172,7 +185,8 @@ async def run_agent_turn(
             )
 
         # Render response
-        render_response(response, elapsed, job.tool_calls, job.steps)
+        if not unattended:
+            render_response(response, elapsed, job.tool_calls, job.steps)
 
         _job_manager.complete(job.job_id, response)
 
@@ -312,13 +326,9 @@ async def handle_command(
             else:
                 render_error(f"Session '{target}' not found.")
 
-    elif command == "/memory":
-        if len(parts) > 1 and parts[1] == "clear":
-            if click.confirm("Clear all memory for this user?", default=False):
-                memoria.clear_all()
-                render_success("🧹 Memory cleared.")
-        else:
-            render_memory_status(memoria.get_triplet_count(), memoria.get_summary())
+    elif command == "/sessions":
+        updated = Session.list_all()
+        render_session_list(updated)
 
     elif command == "/jobs":
         jobs = _job_manager.list_recent(20)
@@ -438,6 +448,68 @@ async def handle_command(
         else:
             render_token_usage(_token_tracker.get_all(), _token_tracker.get_totals())
 
+    elif command == "/cron":
+        mgr = CronManager()
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        if sub == "list" or not sub:
+            render_cron_list(mgr.list_all())
+        elif sub == "view":
+            if len(parts) < 3:
+                render_error("Usage: /cron view <job_id>")
+            else:
+                job_id = parts[2]
+                all_jobs = mgr.list_all()
+                found = next((j for j in all_jobs if j.job_id == job_id), None)
+                if found:
+                    from .ui import render_cron_result
+                    render_cron_result(found)
+                else:
+                    render_error(f"Cron job '{job_id}' not found.")
+        elif sub == "rm" or sub == "delete":
+            if len(parts) < 3:
+                render_error("Usage: /cron rm <job_id>")
+            else:
+                if mgr.remove_job(parts[2]):
+                    render_success(f"🗑️  Cron job '{parts[2]}' removed.")
+                else:
+                    render_error(f"Cron job '{parts[2]}' not found.")
+        else:
+            render_cron_list(mgr.list_all())
+
+    elif command == "/memory":
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        if not sub or sub == "list" or sub == "view":
+            from .ui import render_memory_dashboard
+            render_memory_dashboard(memoria.get_summary(), memoria.get_all_triplets())
+        elif sub == "rm":
+            if len(parts) < 3:
+                render_error("Usage: /memory rm <id>")
+            else:
+                if memoria.delete_triplet(parts[2]):
+                    render_success(f"🗑️  Memory fact '{parts[2]}' deleted.")
+                else:
+                    # Try partial match (the UI shows short IDs)
+                    all_t = memoria.get_all_triplets()
+                    found = [t for t in all_t if t["id"].startswith(parts[2])]
+                    if len(found) == 1:
+                        memoria.delete_triplet(found[0]["id"])
+                        render_success(f"🗑️  Memory fact '{found[0]['id'][:8]}' deleted.")
+                    elif len(found) > 1:
+                        render_error(f"Multiple matches for '{parts[2]}'. Be more specific.")
+                    else:
+                        render_error(f"Memory fact '{parts[2]}' not found.")
+        elif sub == "clear":
+            if click.confirm("Are you sure you want to clear ALL persona and session memory?", default=False):
+                memoria.clear_all()
+                render_success("🧹 Memory wiped clean.")
+        elif sub == "summarize":
+            # Just show the summary in a dedicated panel
+            from .ui import render_memory_dashboard
+            render_memory_dashboard(memoria.get_summary(), [])
+        else:
+            from .ui import render_memory_dashboard
+            render_memory_dashboard(memoria.get_summary(), memoria.get_all_triplets())
+
     elif command == "/tools":
         render_tools_list(get_all_available_tools())
 
@@ -541,7 +613,7 @@ async def interactive_loop(
 
     while True:
         try:
-            user_input = get_user_input(session.title)
+            user_input = await get_user_input(session.title)
         except (KeyboardInterrupt, EOFError):
             user_input = "/exit"
 
@@ -587,6 +659,8 @@ async def interactive_loop(
             action_mode = {"categories": ["DATA_AND_UTILITY"], "pill": "#calc"}
         elif "#note" in user_input.lower():
             action_mode = {"categories": ["APP_CONNECTORS"], "pill": "#note"}
+        elif "#cron" in user_input.lower() or "#schedule" in user_input.lower():
+            action_mode = {"categories": ["CRON_TOOLS"], "pill": "#cron"}
 
         if action_mode:
             console.print(f"  [accent]⚡ Action Pill detected: {action_mode['pill']}[/accent]")
@@ -870,6 +944,90 @@ def ai(action: str, args: tuple) -> None:
 
 def main() -> None:
     cli()
+
+
+@cli.group()
+def cron() -> None:
+    """Manage scheduled agentic tasks."""
+    pass
+
+
+@cron.command()
+def list() -> None:
+    """List all scheduled cron jobs."""
+    mgr = CronManager()
+    render_cron_list(mgr.list_all())
+
+
+@cron.command()
+@click.argument("job_id")
+def view(job_id: str) -> None:
+    """View details and last result of a cron job."""
+    mgr = CronManager()
+    all_jobs = mgr.list_all()
+    found = next((j for j in all_jobs if j.job_id == job_id), None)
+    if found:
+        from .ui import render_cron_result
+        render_cron_result(found)
+    else:
+        render_error(f"Job not found: {job_id}")
+
+
+@cron.command()
+@click.argument("job_id")
+def rm(job_id: str) -> None:
+    """Remove a scheduled cron job."""
+    mgr = CronManager()
+    if mgr.remove_job(job_id):
+        render_success(f"🗑️  Removed cron job: {job_id}")
+    else:
+        render_error(f"Job not found: {job_id}")
+
+
+@cron.command()
+@click.option("--interactive", is_flag=True, help="Allow firewall to prompt for confirmation")
+def run_pending(interactive: bool) -> None:
+    """Execute all pending cron jobs."""
+    mgr = CronManager()
+    pending = mgr.get_pending_jobs()
+    if not pending:
+        console.print("[dim_text]No pending cron jobs found.[/dim_text]")
+        return
+
+    render_success(f"⚡ Running {len(pending)} pending cron job(s)...")
+
+    async def _run_jobs():
+        api_client = _make_api_client()
+        try:
+            for job in pending:
+                console.print(f"\n[sentinel]▶ Running Job: {job.job_id}[/sentinel]")
+                console.print(f"[muted]Prompt: {job.prompt}[/muted]")
+                
+                # Load or create session for the job
+                session = Session.load(job.session_id) if job.session_id else Session(title=f"Cron: {job.job_id}")
+                if not session:
+                    session = Session(title=f"Cron: {job.job_id}")
+                
+                scratchpad = Scratchpad(session.session_id)
+                user_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, _config.api_key or "anonymous"))
+                memoria = Memoria(user_id, session.session_id, api_client, _config)
+
+                response, _ = await run_agent_turn(
+                    user_input=job.prompt,
+                    session=session,
+                    api_client=api_client,
+                    scratchpad=scratchpad,
+                    memoria=memoria,
+                    show_routing=False,
+                    unattended=not interactive,
+                )
+                
+                mgr.mark_run(job.job_id, result=response)
+                render_success(f"✅ Job {job.job_id} completed.")
+        finally:
+            await api_client.close()
+
+    asyncio.run(_run_jobs())
 
 
 if __name__ == "__main__":

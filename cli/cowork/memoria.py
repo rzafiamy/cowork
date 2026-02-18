@@ -499,6 +499,27 @@ class Memoria:
         ).fetchone()
         return row["n"] if row else 0
 
+    def get_all_triplets(self) -> list[dict]:
+        """Return all triplets for the user."""
+        rows = self._db.execute(
+            "SELECT id, subject, predicate, object, created_at FROM kg_triplets WHERE user_id = ? ORDER BY created_at DESC",
+            (self.user_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_triplet(self, triplet_id: str) -> bool:
+        """Delete a specific triplet."""
+        cursor = self._db.execute(
+            "DELETE FROM kg_triplets WHERE id = ? AND user_id = ?",
+            (triplet_id, self.user_id),
+        )
+        try:
+            self._db.execute("DELETE FROM kg_vec WHERE id = ?", (triplet_id,))
+        except Exception:
+            pass
+        self._db.commit()
+        return cursor.rowcount > 0
+
     def get_summary(self) -> str:
         return self._summary
 

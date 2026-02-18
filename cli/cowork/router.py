@@ -18,6 +18,7 @@ DOMAINS = [
     "SESSION_SCRATCHPAD",
     "APP_CONNECTORS",
     "WORKSPACE_TOOLS",   # Filesystem-backed session workspace (artifacts, notes, context)
+    "CRON_TOOLS",        # Scheduling recurring tasks/agent triggers
     "CONVERSATIONAL",
     "ALL_TOOLS",
     # ── External (Paid API) ───────────────────────────────────────────────────
@@ -56,6 +57,7 @@ Available categories:
 - SESSION_SCRATCHPAD: Storing/retrieving large data within the session
 - APP_CONNECTORS: Notes, Kanban tasks, calendar events, file storage
 - WORKSPACE_TOOLS: Write/read files to the session workspace folder, save notes, update session context, search across sessions
+- CRON_TOOLS: Schedule recurring tasks or one-time future agent triggers (daily digests, reminders)
 - CONVERSATIONAL: Simple chat, greetings, opinions (NO tools needed)
 - ALL_TOOLS: When intent is ambiguous or multiple domains are needed
 
@@ -165,6 +167,8 @@ class MetaRouter:
                 categories.append("WORKSPACE_TOOLS")
             if any(w in p for w in ["note", "task", "kanban", "calendar", "event", "file", "write"]):
                 categories.append("APP_CONNECTORS")
+            if any(w in p for w in ["cron", "schedule", "remind me", "every day", "daily", "weekly", "tomorrow at"]):
+                categories.append("CRON_TOOLS")
             if any(w in p for w in ["image", "picture", "photo", "movie"]):
                 categories.append("MEDIA_AND_ENTERTAINMENT")
             if any(w in p for w in ["analyze", "look at", "describe", "vision", "ocr"]):

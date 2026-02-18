@@ -738,6 +738,10 @@ tools:
     action: ask
     description: "Confirm multi-page crawl of external website"
 
+  - name: cron_schedule
+    action: ask
+    description: "Confirm scheduling a recurring or future task"
+
 # Whitelist: If defined, ONLY these tools are allowed
 # whitelist:
 #   - calc

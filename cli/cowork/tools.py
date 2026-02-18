@@ -12,6 +12,7 @@ import urllib.parse
 from typing import Any, Callable, Optional
 
 from .config import Scratchpad
+from .cron import CronManager
 from .workspace import WorkspaceSession, workspace_manager, WORKSPACE_ROOT
 from .theme import GATEWAY_ERROR_PREFIX, TOOL_ERROR_PREFIX, OP_DEFAULTS
 from .tools_external import (
@@ -282,6 +283,59 @@ ALL_TOOLS: list[dict] = [
                     "query": {"type": "string", "description": "Search term to look for across all sessions"},
                 },
                 "required": ["query"],
+            },
+        },
+    },
+    # ── CRON_TOOLS ────────────────────────────────────────────────────────────
+    {
+        "category": "CRON_TOOLS",
+        "type": "function",
+        "function": {
+            "name": "cron_schedule",
+            "description": (
+                "Schedule a recurring or one-time task for the agent. "
+                "The agent will be triggered at the specified time with the given prompt. "
+                "Use this for daily digests, reminders, or periodic research."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "The prompt the agent should execute at the scheduled time"},
+                    "schedule_type": {
+                        "type": "string", 
+                        "description": "How often to run",
+                        "enum": ["once", "daily", "weekly"]
+                    },
+                    "schedule_value": {
+                        "type": "string", 
+                        "description": "Time to run. For 'daily' or 'weekly', use 'HH:MM' (24h format). For 'once', use ISO format or 'HH:MM' (defaults to tomorrow)."
+                    },
+                },
+                "required": ["prompt", "schedule_type", "schedule_value"],
+            },
+        },
+    },
+    {
+        "category": "CRON_TOOLS",
+        "type": "function",
+        "function": {
+            "name": "cron_list",
+            "description": "List all active scheduled cron tasks.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "category": "CRON_TOOLS",
+        "type": "function",
+        "function": {
+            "name": "cron_delete",
+            "description": "Delete a scheduled cron task by its ID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "job_id": {"type": "string", "description": "The ID of the cron job to delete"}
+                },
+                "required": ["job_id"],
             },
         },
     },
@@ -727,3 +781,43 @@ class ToolExecutor:
             for match in r["matches"]:
                 lines.append(f"      • {match}")
         return "\n".join(lines)
+
+    # ── Cron Tools ────────────────────────────────────────────────────────────
+
+    def _tool_cron_schedule(self, prompt: str, schedule_type: str, schedule_value: str) -> str:
+        self._emit(f"⏰ Scheduling {schedule_type} task: '{prompt[:40]}...'")
+        mgr = CronManager()
+        job = mgr.add_job(
+            prompt=prompt,
+            schedule_type=schedule_type,
+            schedule_value=schedule_value,
+            session_id=self.scratchpad.session_id
+        )
+        return (
+            f"✅ Task scheduled successfully!\n"
+            f"• Job ID: `{job.job_id}`\n"
+            f"• Next Run: `{job.next_run}`\n"
+            f"• Schedule: {schedule_type} @ {schedule_value}"
+        )
+
+    def _tool_cron_list(self) -> str:
+        self._emit("📋 Fetching scheduled tasks...")
+        mgr = CronManager()
+        jobs = mgr.list_all()
+        if not jobs:
+            return "No scheduled tasks found."
+        
+        lines = ["Scheduled tasks:"]
+        for job in jobs:
+            lines.append(
+                f"• [{job.job_id}] {job.prompt[:50]}...\n"
+                f"  Schedule: {job.schedule_type} ({job.schedule_value}) | Next: {job.next_run}"
+            )
+        return "\n".join(lines)
+
+    def _tool_cron_delete(self, job_id: str) -> str:
+        self._emit(f"🗑️  Deleting scheduled task: {job_id}...")
+        mgr = CronManager()
+        if mgr.remove_job(job_id):
+            return f"✅ Cron job `{job_id}` deleted."
+        return f"❌ Cron job `{job_id}` not found."
