@@ -562,6 +562,40 @@ def render_warning(message: str) -> None:
     console.print(Panel(f"[warning]{message}[/warning]", border_style="warning", padding=(0, 2)))
 
 
+def confirm_tool_call(tool_name: str, reason: str, args: dict) -> bool:
+    """Prompt the user to approve a tool call."""
+    from rich.syntax import Syntax
+    import json
+
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="highlight", justify="right", width=14)
+    grid.add_column()
+    grid.add_row("Action", f"[bold_white]{tool_name}[/bold_white]")
+    grid.add_row("Policy", f"[warning]{reason}[/warning]")
+    
+    args_json = json.dumps(args, indent=2)
+    syntax = Syntax(args_json, "json", theme="monokai", background_color="default")
+    
+    panel = Panel(
+        Group(
+            grid,
+            Text(""),
+            Text("Arguments:", style="muted"),
+            syntax,
+            Text(""),
+            Text("Allow this tool to execute?", style="bold_white"),
+        ),
+        title="[sentinel]🛡️ Firewall Confirmation[/sentinel]",
+        border_style="sentinel",
+        padding=(1, 2),
+    )
+    
+    console.print()
+    console.print(panel)
+    
+    return Confirm.ask("Proceed?", default=False, console=console)
+
+
 # ─── Help Display ─────────────────────────────────────────────────────────────
 
 def render_help() -> None:

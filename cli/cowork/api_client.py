@@ -130,6 +130,11 @@ class APIClient:
                 last_error = e
                 break
 
+        if last_error is None:
+            # If we finished the loop without success and without a last_error, 
+            # it means we hit the rate limit (429) every single time.
+            raise APIError(f"API call failed after {self.MAX_RETRIES} attempts due to persistent Rate Limits (429).", 429)
+
         raise APIError(f"API call failed after {self.MAX_RETRIES} attempts: {last_error}")
 
     # ── Streaming Chat Completion ─────────────────────────────────────────────

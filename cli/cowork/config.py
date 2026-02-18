@@ -6,6 +6,7 @@ Handles .env loading, config file (TOML-like JSON), and session state.
 import json
 import os
 import uuid
+import yaml
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -20,6 +21,7 @@ SCRATCHPAD_DIR = CONFIG_DIR / "scratchpad"
 JOBS_FILE        = CONFIG_DIR / "jobs.json"
 TOKENS_FILE      = CONFIG_DIR / "tokens.json"
 AI_PROFILES_FILE = CONFIG_DIR / "ai_profiles.json"
+FIREWALL_FILE    = CONFIG_DIR / "firewall.yaml"
 
 def _ensure_dirs() -> None:
     CONFIG_DIR.mkdir(exist_ok=True)
@@ -94,6 +96,7 @@ class ConfigManager:
             "GITHUB_TOKEN",
             "OPENWEATHER_API_KEY",
             "TMDB_API_KEY",
+            "TWITTER_BEARER_TOKEN",
         ]
         for _k in _ext_keys:
             val = os.getenv(_k)
@@ -658,3 +661,123 @@ class AIProfileManager:
             api_key=config.api_key,
             description="Saved from current config",
         )
+
+
+# ─── Firewall Manager ─────────────────────────────────────────────────────────
+
+class FirewallAction:
+    ALLOW   = "allow"
+    BLOCK   = "block"
+    ASK     = "ask"
+    ANALYZE = "analyze"  # Potential future use for AI scrutiny
+
+
+class FirewallManager:
+    """
+    The Cowork Firewall: Protects the system from malicious or unexpected tool calls.
+    Loads rules from ~/.cowork/firewall.yaml.
+    """
+
+    def __init__(self, config_dir: Path = CONFIG_DIR) -> None:
+        self.config_dir = config_dir
+        self.path = config_dir / "firewall.yaml"
+        self._rules: dict[str, Any] = {}
+        self._load()
+
+    def _load(self) -> None:
+        """Load rules from YAML. Create default if missing."""
+        if not self.path.exists():
+            self._create_default()
+        
+        try:
+            with open(self.path, "r") as f:
+                self._rules = yaml.safe_load(f) or {}
+        except Exception:
+            self._rules = {"policy": {"default_action": "allow"}}
+
+    def _create_default(self) -> None:
+        """Initialize firewall.yaml with safe defaults."""
+        default_content = """# 🛡️ Cowork Tool Firewall
+# Use this to control which tools can run and which require user confirmation.
+
+# Default policy: allow, block, or ask
+policy:
+  default_action: allow
+
+# Tools that ALWAYS require explicit user confirmation
+tools:
+  - name: gmail_send_email
+    action: ask
+    description: "Prevent sending unauthorized emails via Gmail"
+  
+  - name: smtp_send_email
+    action: ask
+    description: "Prevent sending unauthorized emails via SMTP"
+
+  - name: google_calendar_create_event
+    action: ask
+    description: "Confirm adding new events to your calendar"
+
+  - name: storage_write
+    action: ask
+    description: "Prevent overwriting local system files"
+
+  - name: twitter_post_tweet
+    action: ask
+    description: "Prevent accidental public tweets"
+
+  - name: google_drive_upload_text
+    action: ask
+    description: "Confirm uploading documents to Google Drive"
+
+  - name: firecrawl_scrape
+    action: ask
+    description: "Confirm scraping external website content"
+
+  - name: firecrawl_crawl
+    action: ask
+    description: "Confirm multi-page crawl of external website"
+
+# Whitelist: If defined, ONLY these tools are allowed
+# whitelist:
+#   - calc
+#   - get_time
+
+# Blacklist: Tools that are strictly forbidden
+blacklist: []
+
+# Analysis: Tools that should be scrutinized (requires LLM reasoning in future)
+analyze: []
+"""
+        self.path.write_text(default_content, encoding="utf-8")
+
+    def check(self, tool_name: str, args: dict) -> tuple[str, str]:
+        """
+        Check if a tool call is allowed.
+        Returns: (action, reason)
+        Action is one of: allow, block, ask
+        """
+        # 1. Check blacklist
+        blacklist = self._rules.get("blacklist", [])
+        if tool_name in blacklist:
+            return FirewallAction.BLOCK, f"Tool '{tool_name}' is blacklisted."
+
+        # 2. Check whitelist (if not empty)
+        whitelist = self._rules.get("whitelist")
+        if whitelist and tool_name not in whitelist:
+            return FirewallAction.BLOCK, f"Tool '{tool_name}' is not in the whitelist."
+
+        # 3. Check specific tool rules
+        tool_rules = self._rules.get("tools", [])
+        for rule in tool_rules:
+            if rule.get("name") == tool_name:
+                action = rule.get("action", FirewallAction.ALLOW)
+                reason = rule.get("description", f"Rule for {tool_name}")
+                return action, reason
+
+        # 4. Fallback to default policy
+        default_action = self._rules.get("policy", {}).get("default_action", FirewallAction.ALLOW)
+        return default_action, "Default policy"
+
+    def reload(self) -> None:
+        self._load()

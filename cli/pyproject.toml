@@ -32,6 +32,7 @@ dependencies = [
     "aiohttp>=3.8",
     # YouTube transcript (no API key required — always available)
     "youtube-transcript-api>=0.6",
+    "PyYAML>=6.0",
 ]
 
 # ── Optional: local RAG stack (no external vector DB, no API for embeddings) ──

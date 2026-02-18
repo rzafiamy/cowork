@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from .api_client import APIClient, APIError
-from .config import AgentJob, ConfigManager, JobManager, Scratchpad, Session
+from .config import AgentJob, ConfigManager, FirewallManager, FirewallAction, JobManager, Scratchpad, Session
 from .memoria import Memoria
 from .router import MetaRouter
 from .theme import (
@@ -214,6 +214,7 @@ class GeneralPurposeAgent:
         job_manager: JobManager,
         status_callback: Optional[Callable[[str], None]] = None,
         stream_callback: Optional[Callable[[str], None]] = None,
+        confirmation_callback: Optional[Callable[[str, str, dict], Any]] = None,
     ) -> None:
         self.api_client = api_client
         self.config = config
@@ -222,11 +223,13 @@ class GeneralPurposeAgent:
         self.job_manager = job_manager
         self.status_cb = status_callback or (lambda msg: None)
         self.stream_cb = stream_callback or (lambda token: None)
+        self.confirm_cb = confirmation_callback
 
         self.router = MetaRouter(api_client)
         self.compressor = ContextCompressor(api_client, config)
         self.gateway = ExecutionGateway(scratchpad)
         self.executor = ToolExecutor(scratchpad, config, status_callback=self.status_cb)
+        self.firewall = FirewallManager()
 
     # ── Input Gatekeeper ──────────────────────────────────────────────────────
 
@@ -399,6 +402,32 @@ class GeneralPurposeAgent:
                     ok, resolved_args, err = self.gateway.validate_and_resolve(name, raw_args)
                     if not ok:
                         return {"tool_call_id": tc["id"], "role": "tool", "content": err}
+
+                    # ── Firewall Check ──
+                    action, reason = self.firewall.check(name, resolved_args)
+                    
+                    if action == FirewallAction.BLOCK:
+                        self.status_cb(f"🛡️  Firewall BLOCKED: {name} ({reason})")
+                        return {
+                            "tool_call_id": tc["id"],
+                            "role": "tool",
+                            "content": f"🛡️ [FIREWALL BLOCK] This tool call was rejected by the system policy: {reason}",
+                        }
+                    
+                    if action == FirewallAction.ANALYZE:
+                        self.status_cb(f"🧐 Firewall ANALYZE: {name} ({reason})")
+                        # For now, analyze just logs and proceeds, or could trigger a meta-reasoning step
+                        pass
+                    
+                    if action == FirewallAction.ASK and self.confirm_cb:
+                        self.status_cb(f"🛡️  Firewall REQUEST: {name} ({reason})")
+                        confirmed = await self.confirm_cb(name, reason, resolved_args)
+                        if not confirmed:
+                            return {
+                                "tool_call_id": tc["id"],
+                                "role": "tool",
+                                "content": "🛡️ [FIREWALL CANCEL] Tool execution cancelled by the user.",
+                            }
 
                     result_str = await asyncio.get_event_loop().run_in_executor(
                         None, self.executor.execute, name, resolved_args

@@ -34,6 +34,7 @@ from .tools import get_all_available_tools
 from .ui import (
     ThinkingSpinner,
     StreamingRenderer,
+    confirm_tool_call,
     console,
     get_user_input,
     print_banner,
@@ -139,7 +140,23 @@ async def run_agent_turn(
             routing_info = result
             return result
 
+        async def on_confirm(name: str, reason: str, args: dict) -> bool:
+            # Need to stop spinner before asking
+            was_running = spinner._live is not None
+            if was_running:
+                spinner.stop()
+            
+            # Use run_in_executor for the synchronous UI prompt
+            res = await asyncio.get_event_loop().run_in_executor(
+                None, confirm_tool_call, name, reason, args
+            )
+            
+            if was_running:
+                spinner.start()
+            return res
+
         agent.router.classify = patched_classify
+        agent.confirm_cb = on_confirm
 
         response = await agent.run(user_input, session, job)
         elapsed = time.time() - start_time
