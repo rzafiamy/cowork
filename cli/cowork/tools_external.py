@@ -2,10 +2,11 @@
 🔌 External Tools — Paid API Integrations
 Provides rich, production-grade tool implementations that require API keys.
 Each tool degrades gracefully when its key is missing.
+All API calls are disk-cached (TTL per tool) to protect rate limits.
 
 Supported tools:
   YOUTUBE_TOOLS  : youtube_search, youtube_transcript, youtube_metadata
-  SEARCH_TOOLS   : google_search (SerpAPI), brave_search
+  SEARCH_TOOLS   : google_cse_search, google_search, brave_search
   WEB_TOOLS      : firecrawl_scrape, firecrawl_crawl
   NEWS_TOOLS     : newsapi_headlines
   CODE_TOOLS     : github_search
@@ -16,11 +17,14 @@ Supported tools:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import time
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any, Optional
 
 
@@ -39,19 +43,89 @@ def _missing_key(tool_name: str, env_var: str) -> str:
     )
 
 
-def _http_get(url: str, headers: dict | None = None, timeout: int = 15) -> dict | str:
-    """Simple HTTP GET returning parsed JSON or raw text."""
+# ─── Disk-Based TTL Cache ─────────────────────────────────────────────────────
+# Caches API responses to disk to avoid burning rate limits on repeated calls.
+# Cache files live in ~/.cowork/api_cache/ and expire after `ttl` seconds.
+
+_CACHE_DIR = Path.home() / ".cowork" / "api_cache"
+_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+# Default TTLs (seconds) per tool category
+_TTL_SEARCH   = 3600        # 1 hour  — search results
+_TTL_NEWS     = 1800        # 30 min  — news headlines
+_TTL_WEATHER  = 600         # 10 min  — weather (changes fast)
+_TTL_METADATA = 86400       # 24 h    — video/movie metadata
+_TTL_WIKI     = 86400 * 7   # 7 days  — Wikipedia articles
+_TTL_GITHUB   = 3600        # 1 hour  — GitHub search
+_TTL_DEFAULT  = 3600        # 1 hour  — everything else
+
+
+def _cache_key(url: str, payload: dict | None = None) -> str:
+    """Stable cache key from URL + optional POST body."""
+    raw = url + (json.dumps(payload, sort_keys=True) if payload else "")
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _cache_get(key: str, ttl: int) -> dict | str | None:
+    """Return cached value if it exists and is still fresh, else None."""
+    path = _CACHE_DIR / f"{key}.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if time.time() - data["ts"] < ttl:
+            return data["value"]
+    except Exception:
+        pass
+    return None
+
+
+def _cache_set(key: str, value: dict | str) -> None:
+    """Persist a value to the cache."""
+    path = _CACHE_DIR / f"{key}.json"
+    try:
+        path.write_text(
+            json.dumps({"ts": time.time(), "value": value}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def _http_get(
+    url: str,
+    headers: dict | None = None,
+    timeout: int = 15,
+    ttl: int = _TTL_DEFAULT,
+) -> dict | str:
+    """HTTP GET with disk-based TTL caching. Returns parsed JSON or raw text."""
+    ck = _cache_key(url)
+    cached = _cache_get(ck, ttl)
+    if cached is not None:
+        return cached
     req = urllib.request.Request(url, headers=headers or {"User-Agent": "CoworkCLI/1.0"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         raw = resp.read().decode("utf-8", errors="ignore")
     try:
-        return json.loads(raw)
+        result: dict | str = json.loads(raw)
     except json.JSONDecodeError:
-        return raw
+        result = raw
+    _cache_set(ck, result)
+    return result
 
 
-def _http_post(url: str, payload: dict, headers: dict | None = None, timeout: int = 20) -> dict | str:
-    """Simple HTTP POST with JSON body."""
+def _http_post(
+    url: str,
+    payload: dict,
+    headers: dict | None = None,
+    timeout: int = 20,
+    ttl: int = _TTL_DEFAULT,
+) -> dict | str:
+    """HTTP POST with disk-based TTL caching. Returns parsed JSON or raw text."""
+    ck = _cache_key(url, payload)
+    cached = _cache_get(ck, ttl)
+    if cached is not None:
+        return cached
     body = json.dumps(payload).encode("utf-8")
     default_headers = {
         "Content-Type": "application/json",
@@ -63,9 +137,11 @@ def _http_post(url: str, payload: dict, headers: dict | None = None, timeout: in
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         raw = resp.read().decode("utf-8", errors="ignore")
     try:
-        return json.loads(raw)
+        result: dict | str = json.loads(raw)
     except json.JSONDecodeError:
-        return raw
+        result = raw
+    _cache_set(ck, result)
+    return result
 
 
 # ─── YouTube Tools ────────────────────────────────────────────────────────────
@@ -95,7 +171,7 @@ def youtube_search(
     url = f"https://www.googleapis.com/youtube/v3/search?{params}"
 
     try:
-        data = _http_get(url)
+        data = _http_get(url, ttl=_TTL_SEARCH)
         if isinstance(data, str):
             return f"YouTube Search API error: {data[:500]}"
 
@@ -187,7 +263,7 @@ def youtube_metadata(video_id: str) -> str:
     url = f"https://www.googleapis.com/youtube/v3/videos?{params}"
 
     try:
-        data = _http_get(url)
+        data = _http_get(url, ttl=_TTL_METADATA)
         if isinstance(data, str):
             return f"YouTube API error: {data[:500]}"
 
@@ -236,7 +312,86 @@ def youtube_metadata(video_id: str) -> str:
         return f"YouTube metadata fetch failed: {e}"
 
 
-# ─── Google Search (SerpAPI) ──────────────────────────────────────────────────
+# ─── Google Search (Custom Search JSON API + SerpAPI fallback) ────────────────
+
+def google_cse_search(
+    query: str,
+    num_results: int = 5,
+    language: str = "en",
+    date_restrict: str = "",
+    site_search: str = "",
+) -> str:
+    """
+    Search Google using the official Custom Search JSON API.
+    Requires: GOOGLE_API_KEY + GOOGLE_SEARCH_ENGINE_ID
+    date_restrict: d[N] (N days), w[N] (N weeks), m[N] (N months), y[N] (N years)
+    site_search: restrict results to a specific site (e.g. 'github.com')
+    """
+    api_key = _env("GOOGLE_API_KEY")
+    cx = _env("GOOGLE_SEARCH_ENGINE_ID")
+
+    if not api_key:
+        return _missing_key("google_cse_search", "GOOGLE_API_KEY")
+    if not cx:
+        return _missing_key("google_cse_search", "GOOGLE_SEARCH_ENGINE_ID")
+
+    num_results = min(max(1, num_results), 10)
+    params: dict[str, Any] = {
+        "key": api_key,
+        "cx": cx,
+        "q": query,
+        "num": num_results,
+        "hl": language,
+    }
+    if date_restrict:
+        params["dateRestrict"] = date_restrict
+    if site_search:
+        params["siteSearch"] = site_search
+
+    url = f"https://www.googleapis.com/customsearch/v1?{urllib.parse.urlencode(params)}"
+
+    try:
+        data = _http_get(url, ttl=_TTL_SEARCH)
+
+        error = data.get("error")
+        if error:
+            return f"Google CSE API error {error.get('code')}: {error.get('message', 'Unknown error')}"
+
+        items = data.get("items", [])
+        search_info = data.get("searchInformation", {})
+        total = search_info.get("formattedTotalResults", "?")  # e.g. "1,230,000"
+        search_time = search_info.get("formattedSearchTime", "?")  # e.g. "0.42"
+
+        lines = [
+            f"🔍 **Google Search Results** for: **{query}**\n"
+            f"   About {total} results ({search_time}s)\n"
+        ]
+
+        if not items:
+            lines.append("No results found.")
+        else:
+            for i, item in enumerate(items, 1):
+                title = item.get("title", "Untitled")
+                link = item.get("link", "")
+                snippet = item.get("snippet", "").replace("\n", " ")
+                display_link = item.get("displayLink", "")
+                # Rich snippet date if available
+                pagemap = item.get("pagemap", {})
+                metatags = pagemap.get("metatags", [{}])
+                date = metatags[0].get("article:published_time", "")[:10] if metatags else ""
+                date_str = f" | {date}" if date else ""
+                lines.append(
+                    f"{i}. **{title}**{date_str}\n"
+                    f"   🌐 {display_link}\n"
+                    f"   URL: {link}\n"
+                    f"   {snippet}\n"
+                )
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return f"Google CSE search failed: {e}"
+
 
 def google_search(
     query: str,
@@ -245,13 +400,24 @@ def google_search(
     time_range: str = "",
 ) -> str:
     """
-    Search Google via SerpAPI.
-    Requires: SERPAPI_KEY
-    time_range: qdr:h (hour), qdr:d (day), qdr:w (week), qdr:m (month)
+    Search Google. Automatically uses the best available backend:
+      1. Google Custom Search JSON API (GOOGLE_API_KEY + GOOGLE_SEARCH_ENGINE_ID) — preferred
+      2. SerpAPI (SERPAPI_KEY) — fallback
+    time_range (SerpAPI only): qdr:h (hour), qdr:d (day), qdr:w (week), qdr:m (month)
     """
+    # Prefer native Google API if both keys are present
+    if _env("GOOGLE_API_KEY") and _env("GOOGLE_SEARCH_ENGINE_ID"):
+        return google_cse_search(query=query, num_results=num_results)
+
+    # Fall back to SerpAPI
     api_key = _env("SERPAPI_KEY")
     if not api_key:
-        return _missing_key("google_search", "SERPAPI_KEY")
+        return (
+            "❌ Tool 'google_search' requires either:\n"
+            "   • GOOGLE_API_KEY + GOOGLE_SEARCH_ENGINE_ID  (Google Custom Search API)\n"
+            "   • SERPAPI_KEY  (SerpAPI fallback)\n"
+            "   Set them in your .env file and restart Cowork."
+        )
 
     params: dict[str, Any] = {
         "q": query,
@@ -268,30 +434,25 @@ def google_search(
     url = f"https://serpapi.com/search?{urllib.parse.urlencode(params)}"
 
     try:
-        data = _http_get(url)
-        if isinstance(data, str):
-            return f"SerpAPI error: {data[:500]}"
+        data = _http_get(url, ttl=_TTL_SEARCH)
 
         organic = data.get("organic_results", [])
         answer_box = data.get("answer_box", {})
         knowledge_graph = data.get("knowledge_graph", {})
 
-        lines = [f"🔍 **Google Search Results** for: **{query}**\n"]
+        lines = [f"🔍 **Google Search Results** (via SerpAPI) for: **{query}**\n"]
 
-        # Answer box (direct answer)
         if answer_box:
             answer = answer_box.get("answer") or answer_box.get("snippet", "")
             if answer:
                 lines.append(f"💡 **Direct Answer**: {answer}\n")
 
-        # Knowledge graph
         if knowledge_graph:
             kg_title = knowledge_graph.get("title", "")
             kg_desc = knowledge_graph.get("description", "")
             if kg_title:
                 lines.append(f"📚 **Knowledge Graph**: {kg_title} — {kg_desc}\n")
 
-        # Organic results
         if not organic:
             lines.append("No organic results found.")
         else:
@@ -310,7 +471,7 @@ def google_search(
         return "\n".join(lines)
 
     except Exception as e:
-        return f"Google search failed: {e}"
+        return f"Google search (SerpAPI) failed: {e}"
 
 
 # ─── Brave Search ─────────────────────────────────────────────────────────────
@@ -344,9 +505,7 @@ def brave_search(
     }
 
     try:
-        data = _http_get(url, headers=headers)
-        if isinstance(data, str):
-            return f"Brave Search API error: {data[:500]}"
+        data = _http_get(url, headers=headers, ttl=_TTL_SEARCH)
 
         results = data.get("web", {}).get("results", [])
         if not results:
@@ -398,7 +557,7 @@ def firecrawl_scrape(
     }
 
     try:
-        data = _http_post("https://api.firecrawl.dev/v1/scrape", payload, headers=headers)
+        data = _http_post("https://api.firecrawl.dev/v1/scrape", payload, headers=headers, ttl=_TTL_DEFAULT)
         if isinstance(data, str):
             return f"Firecrawl API error: {data[:500]}"
 
@@ -455,7 +614,7 @@ def firecrawl_crawl(
 
     try:
         # Start crawl job
-        data = _http_post("https://api.firecrawl.dev/v1/crawl", payload, headers=headers)
+        data = _http_post("https://api.firecrawl.dev/v1/crawl", payload, headers=headers, ttl=_TTL_DEFAULT)
         if isinstance(data, str):
             return f"Firecrawl API error: {data[:500]}"
 
@@ -534,9 +693,7 @@ def newsapi_headlines(
     url = f"{endpoint}?{urllib.parse.urlencode(params)}"
 
     try:
-        data = _http_get(url)
-        if isinstance(data, str):
-            return f"NewsAPI error: {data[:500]}"
+        data = _http_get(url, ttl=_TTL_NEWS)
 
         if data.get("status") != "ok":
             return f"NewsAPI error: {data.get('message', 'Unknown error')}"
@@ -605,9 +762,7 @@ def github_search(
         headers["Authorization"] = f"Bearer {token}"
 
     try:
-        data = _http_get(url, headers=headers)
-        if isinstance(data, str):
-            return f"GitHub API error: {data[:500]}"
+        data = _http_get(url, headers=headers, ttl=_TTL_GITHUB)
 
         items = data.get("items", [])
         total = data.get("total_count", 0)
@@ -671,7 +826,7 @@ def openweather_current(location: str, units: str = "metric") -> str:
     url = f"https://api.openweathermap.org/data/2.5/weather?{params}"
 
     try:
-        data = _http_get(url)
+        data = _http_get(url, ttl=_TTL_WEATHER)
         if isinstance(data, str):
             return f"OpenWeatherMap error: {data[:500]}"
         if data.get("cod") not in (200, "200"):
@@ -725,7 +880,7 @@ def openweather_forecast(
     url = f"https://api.openweathermap.org/data/2.5/forecast?{params}"
 
     try:
-        data = _http_get(url)
+        data = _http_get(url, ttl=_TTL_WEATHER)
         if isinstance(data, str):
             return f"OpenWeatherMap error: {data[:500]}"
         if data.get("cod") not in (200, "200"):
@@ -790,7 +945,7 @@ def tmdb_search(
     url = f"https://api.themoviedb.org/3/search/{media_type}?{urllib.parse.urlencode(params)}"
 
     try:
-        data = _http_get(url)
+        data = _http_get(url, ttl=_TTL_METADATA)
         if isinstance(data, str):
             return f"TMDB API error: {data[:500]}"
 
@@ -859,7 +1014,7 @@ def tmdb_details(
     url = f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}?{params}"
 
     try:
-        data = _http_get(url)
+        data = _http_get(url, ttl=_TTL_METADATA)
         if isinstance(data, str):
             return f"TMDB API error: {data[:500]}"
         if "status_message" in data:
@@ -952,7 +1107,7 @@ def wikipedia_search(query: str, max_results: int = 5) -> str:
     url = f"https://en.wikipedia.org/w/api.php?{params}"
 
     try:
-        data = _http_get(url, headers={"User-Agent": "CoworkCLI/1.0 (contact@cowork.ai)"})
+        data = _http_get(url, headers={"User-Agent": "CoworkCLI/1.0 (contact@cowork.ai)"}, ttl=_TTL_WIKI)
         if isinstance(data, str):
             return f"Wikipedia search error: {data[:500]}"
 
@@ -991,7 +1146,7 @@ def wikipedia_article(title: str, section: str = "") -> str:
     url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{encoded}"
 
     try:
-        summary_data = _http_get(url, headers={"User-Agent": "CoworkCLI/1.0"})
+        summary_data = _http_get(url, headers={"User-Agent": "CoworkCLI/1.0"}, ttl=_TTL_WIKI)
         if isinstance(summary_data, str):
             return f"Wikipedia error: {summary_data[:500]}"
 
@@ -1105,21 +1260,52 @@ EXTERNAL_TOOLS: list[dict] = [
         "category": "SEARCH_TOOLS",
         "type": "function",
         "function": {
-            "name": "google_search",
+            "name": "google_cse_search",
             "description": (
-                "Search Google using SerpAPI. Returns organic results, answer boxes, "
-                "and knowledge graph data. More accurate than DuckDuckGo. "
-                "Requires SERPAPI_KEY."
+                "Search Google using the official Custom Search JSON API. "
+                "Returns titles, URLs, snippets, and publication dates. "
+                "Supports site-restricted search and date filtering. "
+                "Requires GOOGLE_API_KEY + GOOGLE_SEARCH_ENGINE_ID."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
                     "num_results": {"type": "integer", "description": "Number of results (1-10, default 5)"},
-                    "location": {"type": "string", "description": "Geographic location for localized results"},
+                    "language": {"type": "string", "description": "Language code for results (default: en)"},
+                    "date_restrict": {
+                        "type": "string",
+                        "description": "Restrict by date: d5 (5 days), w2 (2 weeks), m1 (1 month), y1 (1 year)",
+                    },
+                    "site_search": {
+                        "type": "string",
+                        "description": "Restrict results to a specific domain (e.g. 'github.com')",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "category": "SEARCH_TOOLS",
+        "type": "function",
+        "function": {
+            "name": "google_search",
+            "description": (
+                "Search Google using the best available backend: "
+                "Google Custom Search API (preferred, needs GOOGLE_API_KEY + GOOGLE_SEARCH_ENGINE_ID) "
+                "or SerpAPI fallback (needs SERPAPI_KEY). "
+                "Returns organic results, answer boxes, and knowledge graph data."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "num_results": {"type": "integer", "description": "Number of results (1-10, default 5)"},
+                    "location": {"type": "string", "description": "Geographic location for localized results (SerpAPI only)"},
                     "time_range": {
                         "type": "string",
-                        "description": "Time filter: qdr:h (hour), qdr:d (day), qdr:w (week), qdr:m (month)",
+                        "description": "Time filter (SerpAPI only): qdr:h (hour), qdr:d (day), qdr:w (week), qdr:m (month)",
                     },
                 },
                 "required": ["query"],
@@ -1423,6 +1609,7 @@ EXTERNAL_TOOL_HANDLERS: dict[str, Any] = {
     "youtube_transcript":   youtube_transcript,
     "youtube_metadata":     youtube_metadata,
     # Search
+    "google_cse_search":    google_cse_search,
     "google_search":        google_search,
     "brave_search":         brave_search,
     # Web
@@ -1451,7 +1638,10 @@ KEY_REQUIREMENTS: dict[str, str | None] = {
     "youtube_search":       "YOUTUBE_API_KEY",
     "youtube_transcript":   None,               # No key required
     "youtube_metadata":     "YOUTUBE_API_KEY",
-    "google_search":        "SERPAPI_KEY",
+    # google_cse_search needs GOOGLE_API_KEY; checked via custom logic below
+    "google_cse_search":    "GOOGLE_API_KEY",
+    # google_search works with either Google CSE keys OR SerpAPI — always show it
+    "google_search":        None,
     "brave_search":         "BRAVE_SEARCH_API_KEY",
     "firecrawl_scrape":     "FIRECRAWL_API_KEY",
     "firecrawl_crawl":      "FIRECRAWL_API_KEY",

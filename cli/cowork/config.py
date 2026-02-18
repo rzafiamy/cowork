@@ -83,6 +83,8 @@ class ConfigManager:
         # ── External Tool API Keys (loaded from .env, stored in memory only) ──
         _ext_keys = [
             "YOUTUBE_API_KEY",
+            "GOOGLE_API_KEY",
+            "GOOGLE_SEARCH_ENGINE_ID",
             "SERPAPI_KEY",
             "BRAVE_SEARCH_API_KEY",
             "FIRECRAWL_API_KEY",
