@@ -15,17 +15,27 @@ Supported tools:
   KNOWLEDGE_TOOLS: wikipedia_search, wikipedia_article
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import os
 import re
+import smtplib
 import time
 import urllib.parse
 import urllib.request
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Any, Optional
+
+try:
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from googleapiclient.discovery import build
+    GOOGLE_LIBS_AVAILABLE = True
+except ImportError:
+    GOOGLE_LIBS_AVAILABLE = False
 
 
 # ─── Key Helpers ──────────────────────────────────────────────────────────────
@@ -1197,7 +1207,314 @@ def wikipedia_article(title: str, section: str = "") -> str:
         return f"Wikipedia article fetch failed for '{title}': {e}"
 
 
-# ─── Tool Schema Definitions (for ALL_TOOLS registry) ─────────────────────────
+
+# ─── Communication & Messaging ────────────────────────────────────────────────
+
+def smtp_send_email(
+    recipient: str,
+    subject: str,
+    body: str,
+    html: bool = False,
+) -> str:
+    """
+    Send an email via SMTP.
+    Requires: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
+    """
+    host = _env("SMTP_HOST")
+    port = int(_env("SMTP_PORT") or 587)
+    user = _env("SMTP_USER")
+    password = _env("SMTP_PASS")
+
+    if not all([host, user, password]):
+        return "❌ Missing SMTP configuration (SMTP_HOST, SMTP_USER, SMTP_PASS)."
+
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = user
+        msg["To"] = recipient
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "html" if html else "plain"))
+
+        with smtplib.SMTP(host, port) as server:
+            server.starttls()
+            server.login(user, password)
+            server.send_message(msg)
+
+        return f"✅ Email sent successfully to {recipient}."
+    except Exception as e:
+        return f"❌ Failed to send email via SMTP: {e}"
+
+
+def telegram_send_message(
+    chat_id: str,
+    text: str,
+    parse_mode: str = "Markdown",
+) -> str:
+    """
+    Send a message via Telegram Bot API.
+    Requires: TELEGRAM_BOT_TOKEN
+    """
+    token = _env("TELEGRAM_BOT_TOKEN")
+    if not token:
+        return _missing_key("telegram_send_message", "TELEGRAM_BOT_TOKEN")
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": parse_mode,
+    }
+
+    try:
+        data = _http_post(url, payload)
+        if isinstance(data, dict) and data.get("ok"):
+            return f"✅ Telegram message sent to {chat_id}."
+        return f"❌ Telegram error: {data}"
+    except Exception as e:
+        return f"❌ Telegram send failed: {e}"
+
+
+def slack_send_message(
+    channel: str,
+    text: str,
+) -> str:
+    """
+    Send a message to a Slack channel.
+    Requires: SLACK_BOT_TOKEN (starts with xoxb-)
+    """
+    token = _env("SLACK_BOT_TOKEN")
+    if not token:
+        return _missing_key("slack_send_message", "SLACK_BOT_TOKEN")
+
+    url = "https://slack.com/api/chat.postMessage"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json; charset=utf-8",
+    }
+    payload = {
+        "channel": channel,
+        "text": text,
+    }
+
+    try:
+        data = _http_post(url, payload, headers=headers)
+        if isinstance(data, dict) and data.get("ok"):
+            return f"✅ Slack message sent to {channel}."
+        return f"❌ Slack error: {data.get('error', data)}"
+    except Exception as e:
+        return f"❌ Slack send failed: {e}"
+
+
+def twitter_post_tweet(text: str) -> str:
+    """
+    Post a tweet to X (Twitter).
+    Requires: TWITTER_BEARER_TOKEN (for v2 API)
+    Note: Standard API v2 requires OAuth 1.0a or 2.0. This implementation assumes Bearer for v2.
+    """
+    token = _env("TWITTER_BEARER_TOKEN")
+    if not token:
+        return _missing_key("twitter_post_tweet", "TWITTER_BEARER_TOKEN")
+
+    url = "https://api.twitter.com/2/tweets"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    payload = {"text": text}
+
+    try:
+        data = _http_post(url, payload, headers=headers)
+        if isinstance(data, dict) and "data" in data:
+            return f"✅ Tweet posted successfully! ID: {data['data']['id']}"
+        return f"❌ Twitter Error: {data}"
+    except Exception as e:
+        # Twitter often errors on duplicate content or auth issues
+        return f"❌ Twitter/X post failed: {e}"
+
+
+# ─── Google Core Services (Read/Write) ───────────────────────────────────────
+
+def _get_google_creds(scopes: list[str]):
+    """Helper to handle Google OAuth2 flow for CLI."""
+    if not GOOGLE_LIBS_AVAILABLE:
+        return None, "❌ Google API libraries not installed. Run `pip install \"cowork[tools]\"`."
+
+    token_path = Path.home() / ".cowork" / "google_token.json"
+    creds_path = Path.home() / ".cowork" / "google_credentials.json"
+
+    creds = None
+    if token_path.exists():
+        creds = Credentials.from_authorized_user_file(str(token_path), scopes)
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+            except Exception:
+                creds = None
+        
+        if not creds:
+            if not creds_path.exists():
+                return None, (
+                    "❌ Google Credentials missing.\n"
+                    "1. Go to Google Cloud Console.\n"
+                    "2. Create OAuth 2.0 Client ID (Desktop app).\n"
+                    "3. Download JSON and save to `~/.cowork/google_credentials.json`."
+                )
+            flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), scopes)
+            creds = flow.run_local_server(port=0)
+
+        # Save the credentials
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(token_path, "w") as token:
+            token.write(creds.to_json())
+
+    return creds, None
+
+
+def google_calendar_events(max_results: int = 10) -> str:
+    """List upcoming events from primary Google Calendar."""
+    creds, error = _get_google_creds(["https://www.googleapis.com/auth/calendar"])
+    if error: return error
+
+    try:
+        service = build("calendar", "v3", credentials=creds)
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        events_result = service.events().list(
+            calendarId="primary", timeMin=now,
+            maxResults=max_results, singleEvents=True,
+            orderBy="startTime"
+        ).execute()
+        events = events_result.get("items", [])
+
+        if not events:
+            return "📅 No upcoming events found."
+
+        lines = ["📅 **Upcoming Google Calendar Events**\n"]
+        for event in events:
+            start = event["start"].get("dateTime", event["start"].get("date"))
+            lines.append(f"- **{event['summary']}** ({start})")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"❌ Google Calendar error: {e}"
+
+
+def google_calendar_create_event(
+    summary: str,
+    start_time: str,
+    end_time: str,
+    description: str = "",
+    location: str = "",
+) -> str:
+    """
+    Create an event in Google Calendar.
+    Times must be in ISO format (e.g. '2024-12-25T09:00:00Z').
+    """
+    creds, error = _get_google_creds(["https://www.googleapis.com/auth/calendar"])
+    if error: return error
+
+    try:
+        service = build("calendar", "v3", credentials=creds)
+        event = {
+            "summary": summary,
+            "location": location,
+            "description": description,
+            "start": {"dateTime": start_time, "timeZone": "UTC"},
+            "end": {"dateTime": end_time, "timeZone": "UTC"},
+        }
+        event = service.events().insert(calendarId="primary", body=event).execute()
+        return f"✅ Event created: [ {event.get('htmlLink')} ]"
+    except Exception as e:
+        return f"❌ Google Calendar event creation failed: {e}"
+
+
+def google_drive_search(query: str, max_results: int = 5) -> str:
+    """Search for files in Google Drive."""
+    creds, error = _get_google_creds(["https://www.googleapis.com/auth/drive"])
+    if error: return error
+
+    try:
+        service = build("drive", "v3", credentials=creds)
+        results = service.files().list(
+            q=f"name contains '{query}'",
+            pageSize=max_results, fields="nextPageToken, files(id, name, mimeType)"
+        ).execute()
+        items = results.get("files", [])
+
+        if not items:
+            return f"📂 No files found matching '{query}' in Google Drive."
+
+        lines = [f"📂 **Google Drive Results** for '{query}'\n"]
+        for item in items:
+            lines.append(f"- **{item['name']}** (Type: {item['mimeType']}, ID: {item['id']})")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"❌ Google Drive error: {e}"
+
+
+def google_drive_upload_text(filename: str, content: str, mime_type: str = "text/plain") -> str:
+    """Upload a text file to Google Drive."""
+    creds, error = _get_google_creds(["https://www.googleapis.com/auth/drive"])
+    if error: return error
+
+    try:
+        from googleapiclient.http import MediaInMemoryUpload
+        service = build("drive", "v3", credentials=creds)
+        file_metadata = {"name": filename}
+        media = MediaInMemoryUpload(content.encode("utf-8"), mimetype=mime_type)
+        file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+        return f"✅ File uploaded to Google Drive. ID: {file.get('id')}"
+    except Exception as e:
+        return f"❌ Google Drive upload failed: {e}"
+
+
+def gmail_send_email(recipient: str, subject: str, body: str) -> str:
+    """Send an email via Gmail API."""
+    import base64
+    creds, error = _get_google_creds(["https://www.googleapis.com/auth/gmail.send"])
+    if error: return error
+
+    try:
+        service = build("gmail", "v1", credentials=creds)
+        message = MIMEMultipart()
+        message["to"] = recipient
+        message["subject"] = subject
+        message.attach(MIMEText(body))
+
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+        service.users().messages().send(userId="me", body={"raw": raw}).execute()
+        return f"✅ Email sent via Gmail to {recipient}."
+    except Exception as e:
+        return f"❌ Gmail send failed: {e}"
+
+
+# ─── Social & Others ─────────────────────────────────────────────────────────
+
+def whatsapp_send_message(phone_number: str, message: str) -> str:
+    """
+    Placeholder for WhatsApp messaging. 
+    Real implementation would require Twilio API or similar.
+    """
+    return (
+        "📲 **WhatsApp Integration**\n"
+        "Direct WhatsApp messaging requires a professional API like Twilio or Vonage.\n"
+        "To enable this, configure TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN.\n"
+        f"Intent detected: Send '{message}' to {phone_number}."
+    )
+
+
+def linkedin_search(query: str) -> str:
+    """
+    Placeholder for LinkedIn search. 
+    LinkedIn's API is highly restricted. Recommended: use `google_search` filtered to linkedin.com.
+    """
+    return (
+        "🖇️ **LinkedIn Integration**\n"
+        "Direct LinkedIn API access is restricted to approved partners.\n"
+        f"Recommended: Run `google_search(query='site:linkedin.com {query}')` for public profiles."
+    )
+
+
 
 EXTERNAL_TOOLS: list[dict] = [
     # ── YOUTUBE_TOOLS ─────────────────────────────────────────────────────────
@@ -1609,6 +1926,173 @@ EXTERNAL_TOOLS: list[dict] = [
             },
         },
     },
+    # ── COMMUNICATION_TOOLS ───────────────────────────────────────────────────
+    {
+        "category": "COMMUNICATION_TOOLS",
+        "type": "function",
+        "function": {
+            "name": "smtp_send_email",
+            "description": "Send an email using standard SMTP. Requires SMTP_HOST, USER, and PASS.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "recipient": {"type": "string", "description": "Recipient email address"},
+                    "subject": {"type": "string", "description": "Email subject"},
+                    "body": {"type": "string", "description": "Email content"},
+                    "html": {"type": "boolean", "description": "Whether the body is HTML (default: false)"},
+                },
+                "required": ["recipient", "subject", "body"],
+            },
+        },
+    },
+    {
+        "category": "COMMUNICATION_TOOLS",
+        "type": "function",
+        "function": {
+            "name": "telegram_send_message",
+            "description": "Send a message to a Telegram chat or user via Bot API. Requires TELEGRAM_BOT_TOKEN.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chat_id": {"type": "string", "description": "Telegram Chat ID or @username"},
+                    "text": {"type": "string", "description": "Message text"},
+                },
+                "required": ["chat_id", "text"],
+            },
+        },
+    },
+    {
+        "category": "COMMUNICATION_TOOLS",
+        "type": "function",
+        "function": {
+            "name": "slack_send_message",
+            "description": "Send a message to a Slack channel. Requires SLACK_BOT_TOKEN.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "channel": {"type": "string", "description": "Slack channel name or ID"},
+                    "text": {"type": "string", "description": "Message text"},
+                },
+                "required": ["channel", "text"],
+            },
+        },
+    },
+    {
+        "category": "COMMUNICATION_TOOLS",
+        "type": "function",
+        "function": {
+            "name": "twitter_post_tweet",
+            "description": "Post a tweet to X (Twitter). Requires TWITTER_BEARER_TOKEN.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "The content of the tweet"},
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    # ── GOOGLE_TOOLS ──────────────────────────────────────────────────────────
+    {
+        "category": "GOOGLE_TOOLS",
+        "type": "function",
+        "function": {
+            "name": "google_calendar_events",
+            "description": "List upcoming events from the user's Google Calendar.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "max_results": {"type": "integer", "description": "Number of events to list (1-20, default 10)"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "category": "GOOGLE_TOOLS",
+        "type": "function",
+        "function": {
+            "name": "google_calendar_create_event",
+            "description": "Create a new event in Google Calendar.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string", "description": "Event title"},
+                    "start_time": {"type": "string", "description": "Start time in ISO format (UTC), e.g. 2024-12-25T09:00:00Z"},
+                    "end_time": {"type": "string", "description": "End time in ISO format (UTC)"},
+                    "description": {"type": "string", "description": "Optional description"},
+                    "location": {"type": "string", "description": "Optional location"},
+                },
+                "required": ["summary", "start_time", "end_time"],
+            },
+        },
+    },
+    {
+        "category": "GOOGLE_TOOLS",
+        "type": "function",
+        "function": {
+            "name": "google_drive_search",
+            "description": "Search for files in Google Drive.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search term for filename"},
+                    "max_results": {"type": "integer", "description": "Number of results (1-20, default 5)"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "category": "GOOGLE_TOOLS",
+        "type": "function",
+        "function": {
+            "name": "google_drive_upload_text",
+            "description": "Upload a text file or document to Google Drive.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {"type": "string", "description": "Name of the file to create"},
+                    "content": {"type": "string", "description": "Text content of the file"},
+                    "mime_type": {"type": "string", "description": "Optional MIME type (default text/plain)"},
+                },
+                "required": ["filename", "content"],
+            },
+        },
+    },
+    {
+        "category": "GOOGLE_TOOLS",
+        "type": "function",
+        "function": {
+            "name": "gmail_send_email",
+            "description": "Send an email using the Gmail API.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "recipient": {"type": "string", "description": "Recipient email address"},
+                    "subject": {"type": "string", "description": "Email subject"},
+                    "body": {"type": "string", "description": "Email content"},
+                },
+                "required": ["recipient", "subject", "body"],
+            },
+        },
+    },
+    # ── SOCIAL_TOOLS ──────────────────────────────────────────────────────────
+    {
+        "category": "SOCIAL_TOOLS",
+        "type": "function",
+        "function": {
+            "name": "linkedin_search",
+            "description": "Search for LinkedIn profiles (placeholder integration).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 # ─── Function Dispatcher ──────────────────────────────────────────────────────
@@ -1638,6 +2122,20 @@ EXTERNAL_TOOL_HANDLERS: dict[str, Any] = {
     # Knowledge
     "wikipedia_search":     wikipedia_search,
     "wikipedia_article":    wikipedia_article,
+    # Communication
+    "smtp_send_email":      smtp_send_email,
+    "telegram_send_message":telegram_send_message,
+    "slack_send_message":   slack_send_message,
+    "whatsapp_send_message":whatsapp_send_message,
+    "twitter_post_tweet":   twitter_post_tweet,
+    # Google
+    "google_calendar_events":      google_calendar_events,
+    "google_calendar_create_event":google_calendar_create_event,
+    "google_drive_search":         google_drive_search,
+    "google_drive_upload_text":    google_drive_upload_text,
+    "gmail_send_email":            gmail_send_email,
+    # Social
+    "linkedin_search":      linkedin_search,
 }
 
 
@@ -1648,21 +2146,33 @@ KEY_REQUIREMENTS: dict[str, str | None] = {
     "youtube_search":       "YOUTUBE_API_KEY",
     "youtube_transcript":   None,               # No key required
     "youtube_metadata":     "YOUTUBE_API_KEY",
-    # google_cse_search needs GOOGLE_API_KEY; checked via custom logic below
     "google_cse_search":    "GOOGLE_API_KEY",
-    # google_search works with either Google CSE keys OR SerpAPI — always show it
     "google_search":        None,
     "brave_search":         "BRAVE_SEARCH_API_KEY",
     "firecrawl_scrape":     "FIRECRAWL_API_KEY",
     "firecrawl_crawl":      "FIRECRAWL_API_KEY",
     "newsapi_headlines":    "NEWSAPI_KEY",
-    "github_search":        None,               # Optional (GITHUB_TOKEN for rate limits)
+    "github_search":        None,
     "openweather_current":  "OPENWEATHER_API_KEY",
     "openweather_forecast": "OPENWEATHER_API_KEY",
     "tmdb_search":          "TMDB_API_KEY",
     "tmdb_details":         "TMDB_API_KEY",
-    "wikipedia_search":     None,               # No key required
-    "wikipedia_article":    None,               # No key required
+    "wikipedia_search":     None,
+    "wikipedia_article":    None,
+    # Communication
+    "smtp_send_email":      "SMTP_PASS",
+    "telegram_send_message":"TELEGRAM_BOT_TOKEN",
+    "slack_send_message":   "SLACK_BOT_TOKEN",
+    "whatsapp_send_message":None,
+    "twitter_post_tweet":   "TWITTER_BEARER_TOKEN",
+    # Google (OAuth2 handles these)
+    "google_calendar_events":      None,
+    "google_calendar_create_event":None,
+    "google_drive_search":         None,
+    "google_drive_upload_text":    None,
+    "gmail_send_email":            None,
+    # Social
+    "linkedin_search":      None,
 }
 
 

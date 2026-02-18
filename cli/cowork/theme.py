@@ -99,6 +99,18 @@ CATEGORY_STYLES = {
     "WORKSPACE_TOOLS":        ("[tool]🗂️  WORKSPACE_TOOLS[/tool]",           "#34D399"),
     "CONVERSATIONAL":         ("[muted]💬 CONVERSATIONAL[/muted]",           "#6B7280"),
     "ALL_TOOLS":              ("[error]🔥 ALL_TOOLS[/error]",                "#EF4444"),
+    # ── External Tools ──────────────────────────────────────────────────────────
+    "YOUTUBE_TOOLS":          ("[error]📺 YOUTUBE_TOOLS[/error]",            "#EF4444"),
+    "SEARCH_TOOLS":           ("[router]🔍 SEARCH_TOOLS[/router]",             "#60A5FA"),
+    "WEB_TOOLS":              ("[secondary]🌐 WEB_TOOLS[/secondary]",           "#06B6D4"),
+    "NEWS_TOOLS":             ("[accent]📰 NEWS_TOOLS[/accent]",              "#F59E0B"),
+    "CODE_TOOLS":             ("[highlight]💻 CODE_TOOLS[/highlight]",          "#818CF8"),
+    "WEATHER_TOOLS":          ("[secondary]🌤️  WEATHER_TOOLS[/secondary]",       "#06B6D4"),
+    "MEDIA_TOOLS":            ("[accent]🎬 MEDIA_TOOLS[/accent]",              "#F59E0B"),
+    "KNOWLEDGE_TOOLS":        ("[router]📖 KNOWLEDGE_TOOLS[/router]",           "#60A5FA"),
+    "COMMUNICATION_TOOLS":    ("[success]📧 COMMUNICATION_TOOLS[/success]",     "#10B981"),
+    "GOOGLE_TOOLS":           ("[gateway]☁️  GOOGLE_TOOLS[/gateway]",          "#FBBF24"),
+    "SOCIAL_TOOLS":           ("[highlight]🤝 SOCIAL_TOOLS[/highlight]",        "#818CF8"),
 }
 
 # ─── Error Prefixes ───────────────────────────────────────────────────────────

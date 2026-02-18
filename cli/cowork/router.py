@@ -29,6 +29,9 @@ DOMAINS = [
     "WEATHER_TOOLS",    # OpenWeatherMap current + forecast
     "MEDIA_TOOLS",      # TMDB movie/TV search & details
     "KNOWLEDGE_TOOLS",  # Wikipedia search & full article
+    "COMMUNICATION_TOOLS", # Email (SMTP), Telegram, Slack, WhatsApp
+    "GOOGLE_TOOLS",     # Google Calendar, Drive, Gmail
+    "SOCIAL_TOOLS",     # LinkedIn
 ]
 
 # ─── Router System Prompt ─────────────────────────────────────────────────────
@@ -45,6 +48,9 @@ Available categories:
 - CODE_TOOLS: GitHub repository, code, and issue search
 - MEDIA_AND_ENTERTAINMENT: Images, movies (general), general media
 - MEDIA_TOOLS: TMDB movie/TV show search and detailed info (cast, ratings, etc.)
+- COMMUNICATION_TOOLS: Email (SMTP), Telegram, Slack, and X (Twitter) posting
+- GOOGLE_TOOLS: Google Calendar (list/create), Google Drive (search/upload), Gmail (send)
+- SOCIAL_TOOLS: LinkedIn profile/post search
 - VISION: Image analysis, OCR
 - DATA_AND_UTILITY: Math calculations, charts, diagrams, time/date
 - SESSION_SCRATCHPAD: Storing/retrieving large data within the session
@@ -140,6 +146,12 @@ class MetaRouter:
             categories.append("MEDIA_TOOLS")
         if any(w in p for w in ["wikipedia", "wiki article", "encyclopedia", "who was", "what is the history"]):
             categories.append("KNOWLEDGE_TOOLS")
+        if any(w in p for w in ["email", "smtp", "telegram", "slack", "whatsapp", "twitter", "tweet", "post to x", "message", "send to"]):
+            categories.append("COMMUNICATION_TOOLS")
+        if any(w in p for w in ["google calendar", "google drive", "gmail", "gdrive", "calendar event", "upload to drive", "create event"]):
+            categories.append("GOOGLE_TOOLS")
+        if any(w in p for w in ["linkedin", "professional profile"]):
+            categories.append("SOCIAL_TOOLS")
 
         # Built-in tool keywords
         if not categories:

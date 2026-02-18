@@ -48,7 +48,9 @@ local-rag = [
 # Note: API keys must still be set in .env — these are just the Python packages.
 tools = [
     "youtube-transcript-api>=0.6",  # YouTube transcripts (no key needed)
-    # All other tools use only stdlib urllib — no extra packages required!
+    "google-api-python-client>=2.0",
+    "google-auth-oauthlib>=1.0",
+    "google-auth-httplib2>=0.1",
 ]
 
 # ── Optional: everything ───────────────────────────────────────────────────────

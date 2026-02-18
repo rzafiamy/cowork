@@ -515,6 +515,38 @@ def render_ai_profiles(profiles: list[dict]) -> None:
     console.print(table)
 
 
+def render_tools_list(tools: list[dict]) -> None:
+    """Render a table of all activated tools."""
+    if not tools:
+        console.print("[muted]No tools available.[/muted]")
+        return
+
+    table = Table(
+        title="🛠️  Activated Tools",
+        box=box.ROUNDED,
+        border_style="tool",
+        header_style="tool",
+        show_lines=True,
+    )
+    table.add_column("Category", style="router", width=18)
+    table.add_column("Tool Name", style="highlight", width=22)
+    table.add_column("Description", style="text")
+
+    # Group by category
+    tools_sorted = sorted(tools, key=lambda x: (x["category"], x["function"]["name"]))
+    
+    for t in tools_sorted:
+        func = t["function"]
+        table.add_row(
+            t["category"],
+            func["name"],
+            func["description"].split(".")[0] + ".",  # Show first sentence
+        )
+
+    console.print(table)
+    console.print(f"  [dim_text]Total {len(tools)} tools activated across all domains.[/dim_text]")
+
+
 def render_error(message: str, hint: str = "") -> None:
     content = f"[error]{message}[/error]"
     if hint:
@@ -552,6 +584,7 @@ def render_help() -> None:
         ("/ai remove <name>",               "Remove a saved AI profile"),
         ("/ai save <name>",                 "Save current config as a profile"),
         ("/scratchpad",                     "List scratchpad contents"),
+        ("/tools",                          "List all activated tools"),
         ("/trace",                          "Show last job trace"),
         ("/clear",                          "Clear the terminal"),
         ("/exit or /quit",                  "Exit Cowork"),
@@ -648,6 +681,7 @@ SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/ai remove ",              "Remove a profile  e.g. /ai remove gpt4"),
     ("/ai save ",                "Save current config as profile  e.g. /ai save myprofile"),
     ("/scratchpad",              "List scratchpad contents for this session"),
+    ("/tools",                   "List all active tools (built-in + configured)"),
     ("/trace",                   "Show execution trace of last job"),
     ("/clear",                   "Clear the terminal screen"),
     ("/exit",                    "Exit Cowork (also: /quit or /q)"),

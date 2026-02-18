@@ -306,6 +306,8 @@ EXTERNAL_CATEGORIES = {
     "YOUTUBE_TOOLS", "SEARCH_TOOLS", "WEB_TOOLS",
     "NEWS_TOOLS", "CODE_TOOLS", "WEATHER_TOOLS",
     "MEDIA_TOOLS", "KNOWLEDGE_TOOLS",
+    "COMMUNICATION_TOOLS", "GOOGLE_TOOLS",
+    "SOCIAL_TOOLS",
 }
 
 
@@ -341,6 +343,22 @@ def get_available_tools_for_categories(categories: list[str]) -> list[dict]:
         if cat in EXTERNAL_CATEGORIES and name not in available_external_names:
             continue
         result.append(tool)
+    return result
+
+
+def get_all_available_tools() -> list[dict]:
+    """Return all tools that are currently active (built-in + configured external)."""
+    available_external_names = {t["function"]["name"] for t in get_available_external_tools()}
+    result = []
+    for tool in ALL_TOOLS:
+        name = tool["function"]["name"]
+        cat = tool["category"]
+        if cat in EXTERNAL_CATEGORIES:
+            if name in available_external_names:
+                result.append(tool)
+        else:
+            # Built-in categories are always available
+            result.append(tool)
     return result
 
 

@@ -30,6 +30,7 @@ from .api_client import APIClient, APIError
 from .config import AgentJob, AIProfileManager, ConfigManager, JobManager, Scratchpad, Session, TokenTracker
 from .memoria import Memoria
 from .workspace import WorkspaceSession, workspace_manager, WORKSPACE_ROOT
+from .tools import get_all_available_tools
 from .ui import (
     ThinkingSpinner,
     StreamingRenderer,
@@ -48,6 +49,7 @@ from .ui import (
     render_session_list,
     render_success,
     render_token_usage,
+    render_tools_list,
     render_user_message,
     render_warning,
     run_setup_wizard,
@@ -418,6 +420,9 @@ async def handle_command(
                 render_success("🧹 Token usage counters reset.")
         else:
             render_token_usage(_token_tracker.get_all(), _token_tracker.get_totals())
+
+    elif command == "/tools":
+        render_tools_list(get_all_available_tools())
 
     elif command == "/ai":
         sub = parts[1].lower() if len(parts) > 1 else ""
@@ -794,6 +799,13 @@ def tokens(reset: bool) -> None:
             render_success("🧹 Token usage counters reset.")
     else:
         render_token_usage(_token_tracker.get_all(), _token_tracker.get_totals())
+
+
+@cli.command()
+def tools() -> None:
+    """List all currently activated tools."""
+    print_banner()
+    render_tools_list(get_all_available_tools())
 
 
 @cli.command()
