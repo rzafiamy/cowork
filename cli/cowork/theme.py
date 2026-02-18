@@ -96,6 +96,7 @@ CATEGORY_STYLES = {
     "DATA_AND_UTILITY":       ("[tool]📊 DATA_AND_UTILITY[/tool]",           "#34D399"),
     "SESSION_SCRATCHPAD":     ("[memory]📝 SESSION_SCRATCHPAD[/memory]",     "#F472B6"),
     "APP_CONNECTORS":         ("[sentinel]🔌 APP_CONNECTORS[/sentinel]",     "#FB923C"),
+    "WORKSPACE_TOOLS":        ("[tool]🗂️  WORKSPACE_TOOLS[/tool]",           "#34D399"),
     "CONVERSATIONAL":         ("[muted]💬 CONVERSATIONAL[/muted]",           "#6B7280"),
     "ALL_TOOLS":              ("[error]🔥 ALL_TOOLS[/error]",                "#EF4444"),
 }

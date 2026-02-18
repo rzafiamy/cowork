@@ -219,9 +219,19 @@ def youtube_transcript(
 
     try:
         from youtube_transcript_api import YouTubeTranscriptApi  # type: ignore
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=[language, "en"])
-        full_text = " ".join(entry["text"] for entry in transcript_list)
-        duration_secs = sum(entry.get("duration", 0) for entry in transcript_list)
+        
+        # Support for different versions of the library
+        if hasattr(YouTubeTranscriptApi, 'get_transcript'):
+            # Older versions: class method returning list of dicts
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=[language, "en"])
+            full_text = " ".join(entry["text"] for entry in transcript_list)
+            duration_secs = sum(entry.get("duration", 0) for entry in transcript_list)
+        else:
+            # Newer versions: instance method returning snippet objects
+            transcript = YouTubeTranscriptApi().fetch(video_id, languages=[language, "en"])
+            full_text = " ".join(s.text for s in transcript)
+            duration_secs = sum(s.duration for s in transcript)
+
         minutes = int(duration_secs // 60)
         seconds = int(duration_secs % 60)
         return (

@@ -27,6 +27,7 @@ from .agent import GeneralPurposeAgent
 from .api_client import APIClient, APIError
 from .config import AgentJob, ConfigManager, JobManager, Scratchpad, Session
 from .memoria import Memoria
+from .workspace import WorkspaceSession, workspace_manager, WORKSPACE_ROOT
 from .ui import (
     ThinkingSpinner,
     StreamingRenderer,
@@ -140,18 +141,34 @@ async def run_agent_turn(
 
         _job_manager.complete(job.job_id, response)
 
-        # Auto-generate title for new sessions
-        if len(session.messages) == 0 and response:
-            try:
-                title = await agent.generate_title(session)
-                session.title = title
-            except Exception:
-                pass
-
         # Save messages to session
         session.add_message("user", user_input)
         session.add_message("assistant", response)
         session.save()
+
+        # Auto-generate title for new sessions (on first exchange)
+        if len(session.messages) == 2 and response:
+            try:
+                title = await agent.generate_title(session)
+                if title and title != "New Session":
+                    session.title = title
+                    # Rename workspace session folder to match the generated title
+                    if hasattr(session, '_ws') and session._ws:
+                        ws = session._ws
+                        old_slug = ws.slug
+                        new_ws = workspace_manager.rename(old_slug, title)
+                        if new_ws:
+                            session._ws = new_ws
+            except Exception:
+                pass
+
+        # Sync to workspace session
+        if hasattr(session, '_ws') and session._ws:
+            ws = session._ws
+            ws.messages = session.messages
+            ws.title = session.title
+            ws.summary = session.summary
+            ws.save()
 
         _last_job = job
         return response, job
@@ -205,7 +222,20 @@ async def handle_command(
     elif command == "/new":
         new_session = Session(title="New Session")
         new_session.save()
-        render_success(f"✨ New session started: {new_session.session_id[:8]}")
+        # Create matching workspace session
+        ws = workspace_manager.create("New Session")
+        new_session._ws = ws
+        # Point scratchpad to workspace folder
+        new_scratchpad = Scratchpad.__new__(Scratchpad)
+        new_scratchpad.session_id = new_session.session_id
+        new_scratchpad._dir = ws.scratchpad_path
+        new_scratchpad._dir.mkdir(exist_ok=True)
+        new_scratchpad._index = {}
+        new_scratchpad._load_index()
+        render_success(
+            f"✨ New session started: {new_session.session_id[:8]}\n"
+            f"📂 Workspace: workspace/{ws.slug}/"
+        )
         return True, new_session
 
     elif command == "/sessions":
@@ -234,6 +264,14 @@ async def handle_command(
 
             if loaded:
                 render_success(f"📂 Loaded session: '{loaded.title}' ({len(loaded.messages)} messages)")
+                # Try to link workspace session
+                for ws_info in workspace_manager.list_all():
+                    if ws_info["session_id"] == loaded.session_id:
+                        ws = WorkspaceSession.load(ws_info["slug"])
+                        if ws:
+                            loaded._ws = ws
+                            render_success(f"📂 Workspace: workspace/{ws.slug}/")
+                        break
                 return True, loaded
             else:
                 render_error(f"Session '{target}' not found.")
@@ -294,6 +332,55 @@ async def handle_command(
                 )
             console.print(table)
 
+    elif command == "/workspace":
+        from rich.table import Table
+        from rich import box
+        if len(parts) > 1 and parts[1] == "list":
+            sessions = workspace_manager.list_all()
+            if not sessions:
+                console.print("[muted]No workspace sessions found.[/muted]")
+            else:
+                table = Table(title="🗂️  Workspace Sessions", box=box.ROUNDED, border_style="primary")
+                table.add_column("Slug / Folder", style="highlight", min_width=24)
+                table.add_column("Title", style="bold_white")
+                table.add_column("Msgs", justify="center", style="muted")
+                table.add_column("Last Active", style="dim_text")
+                for s in sessions[:20]:
+                    updated = s.get("updated_at", "")[:16].replace("T", " ")
+                    table.add_row(s["slug"], s["title"][:40], str(s["message_count"]), updated)
+                console.print(table)
+                console.print(f"[dim_text]  📂 Root: {WORKSPACE_ROOT}[/dim_text]")
+        elif len(parts) > 1 and parts[1] == "search" and len(parts) > 2:
+            query = parts[2]
+            results = workspace_manager.search(query)
+            if not results:
+                console.print(f"[muted]No matches for '{query}'.[/muted]")
+            else:
+                for r in results:
+                    console.print(f"  [highlight]{r['slug']}/[/highlight] — {r['title']}")
+                    for m in r["matches"]:
+                        console.print(f"    [dim_text]• {m}[/dim_text]")
+        elif len(parts) > 1 and parts[1] == "open":
+            ws = getattr(session, '_ws', None)
+            if ws:
+                console.print(f"  [success]📂 Session workspace:[/success] [highlight]{ws.path}[/highlight]")
+            else:
+                console.print(f"  [muted]📂 Workspace root:[/muted] [highlight]{WORKSPACE_ROOT}[/highlight]")
+        else:
+            ws = getattr(session, '_ws', None)
+            if ws:
+                console.print(f"  [success]📂 Current session workspace:[/success] [highlight]{ws.path}[/highlight]")
+                ctx = ws.read_context()
+                if ctx:
+                    from rich.markdown import Markdown
+                    console.print(Markdown(ctx[:1000]))
+            else:
+                console.print(f"  [muted]No workspace session linked. Use /new to create one.[/muted]")
+            console.print()
+            console.print("[dim_text]  /workspace list          — list all sessions[/dim_text]")
+            console.print("[dim_text]  /workspace search <q>    — search across sessions[/dim_text]")
+            console.print("[dim_text]  /workspace open          — show current session path[/dim_text]")
+
     elif command == "/trace":
         if _last_job:
             from rich.tree import Tree
@@ -320,7 +407,18 @@ async def interactive_loop(
     api_client: APIClient,
 ) -> None:
     """Main interactive REPL loop."""
-    scratchpad = Scratchpad(session.session_id)
+    scratchpad_session_id = session.session_id
+    # Use workspace scratchpad folder if available
+    ws = getattr(session, '_ws', None)
+    if ws:
+        scratchpad = Scratchpad.__new__(Scratchpad)
+        scratchpad.session_id = session.session_id
+        scratchpad._dir = ws.scratchpad_path
+        scratchpad._dir.mkdir(exist_ok=True)
+        scratchpad._index = {}
+        scratchpad._load_index()
+    else:
+        scratchpad = Scratchpad(session.session_id)
     user_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, _config.api_key or "anonymous"))
     memoria = Memoria(user_id, session.session_id, api_client, _config)
 
@@ -355,7 +453,17 @@ async def interactive_loop(
                 break
             if new_session:
                 session = new_session
-                scratchpad = Scratchpad(session.session_id)
+                # Use workspace scratchpad if available
+                ws = getattr(session, '_ws', None)
+                if ws:
+                    scratchpad = Scratchpad.__new__(Scratchpad)
+                    scratchpad.session_id = session.session_id
+                    scratchpad._dir = ws.scratchpad_path
+                    scratchpad._dir.mkdir(exist_ok=True)
+                    scratchpad._index = {}
+                    scratchpad._load_index()
+                else:
+                    scratchpad = Scratchpad(session.session_id)
                 memoria = Memoria(user_id, session.session_id, api_client, _config)
             continue
 
@@ -426,9 +534,21 @@ def chat(session_id: Optional[str], no_banner: bool) -> None:
         if not session:
             render_error(f"Session '{session_id}' not found.")
             session = Session(title="New Session")
+        # Try to link workspace session
+        for ws_info in workspace_manager.list_all():
+            if ws_info["session_id"] == session.session_id:
+                ws = WorkspaceSession.load(ws_info["slug"])
+                if ws:
+                    session._ws = ws
+                    console.print(f"  [dim_text]📂 Workspace: workspace/{ws.slug}/[/dim_text]")
+                break
     else:
         session = Session(title="New Session")
         session.save()
+        # Create matching workspace session
+        ws = workspace_manager.create("New Session")
+        session._ws = ws
+        console.print(f"  [dim_text]📂 Workspace: workspace/{ws.slug}/[/dim_text]")
 
     api_client = APIClient(
         endpoint=_config.api_endpoint,

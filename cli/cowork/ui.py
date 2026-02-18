@@ -8,6 +8,7 @@ import asyncio
 import time
 from contextlib import contextmanager
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, Generator, Optional
 
 from rich import box
@@ -33,6 +34,16 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
+
+# ── prompt_toolkit for smart input (autocomplete + history) ───────────────────
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.document import Document
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.styles import Style as PTStyle
+from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 
 from .theme import (
     BANNER,
@@ -503,16 +514,173 @@ def run_setup_wizard(config: Any) -> bool:
     return True
 
 
+# ─── Slash Command Definitions (for autocomplete) ────────────────────────────
+
+SLASH_COMMANDS: list[tuple[str, str]] = [
+    ("/help",                    "Show all available commands"),
+    ("/new",                     "Start a fresh session"),
+    ("/sessions",                "List all saved sessions"),
+    ("/load ",                   "Load session by ID or number  e.g. /load 1"),
+    ("/workspace",               "Show current session workspace folder"),
+    ("/workspace list",          "List all workspace sessions"),
+    ("/workspace search ",       "Search across sessions  e.g. /workspace search python"),
+    ("/workspace open",          "Open workspace folder path in terminal"),
+    ("/memory",                  "Show Memoria (long-term memory) status"),
+    ("/memory clear",            "Clear all memory for current user"),
+    ("/jobs",                    "Show Sentinel job queue dashboard"),
+    ("/config",                  "Show current configuration"),
+    ("/config set ",             "Set a config value  e.g. /config set stream false"),
+    ("/scratchpad",              "List scratchpad contents for this session"),
+    ("/trace",                   "Show execution trace of last job"),
+    ("/clear",                   "Clear the terminal screen"),
+    ("/exit",                    "Exit Cowork (also: /quit or /q)"),
+    ("/quit",                    "Exit Cowork"),
+]
+
+HASHTAG_PILLS: list[tuple[str, str]] = [
+    ("#research",  "Route to search and knowledge tools"),
+    ("#task",      "Route to Kanban / task management"),
+    ("#kanban",    "Route to Kanban board"),
+    ("#calc",      "Route to math and calculation tools"),
+    ("#math",      "Route to math and calculation tools"),
+    ("#note",      "Route to notes and workspace tools"),
+    ("#workspace", "Route to workspace file tools"),
+]
+
+
+# ─── Cowork Completer ─────────────────────────────────────────────────────────
+
+class CoworkCompleter(Completer):
+    """
+    Smart completer for the Cowork REPL:
+    - Typing '/' shows all slash commands with descriptions
+    - Typing '/lo' filters to matching commands
+    - Typing '#' shows action pill suggestions
+    - Partial word matching anywhere in the command
+    """
+
+    @staticmethod
+    def _esc(s: str) -> str:
+        """Escape XML special chars for prompt_toolkit HTML()."""
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def get_completions(self, document: Document, complete_event: Any):
+        text = document.text_before_cursor
+
+        # ── Slash command completion ──────────────────────────────────────────
+        if text.startswith("/"):
+            typed = text.lower()
+            for cmd, desc in SLASH_COMMANDS:
+                if cmd.lower().startswith(typed) or typed in cmd.lower():
+                    completion_text = cmd[len(text):] if cmd.lower().startswith(typed) else cmd
+                    display = HTML(
+                        f"<b>{self._esc(cmd.rstrip())}</b>  "
+                        f"<ansibrightblack>{self._esc(desc)}</ansibrightblack>"
+                    )
+                    yield Completion(
+                        text=completion_text,
+                        start_position=0,
+                        display=display,
+                    )
+            return
+
+        # ── Hashtag pill completion ───────────────────────────────────────────
+        words = text.split()
+        if words:
+            last_word = words[-1]
+            if last_word.startswith("#"):
+                typed_tag = last_word.lower()
+                for tag, desc in HASHTAG_PILLS:
+                    if tag.lower().startswith(typed_tag):
+                        completion_text = tag[len(last_word):]
+                        display = HTML(
+                            f"<ansiyellow><b>{self._esc(tag)}</b></ansiyellow>  "
+                            f"<ansibrightblack>{self._esc(desc)}</ansibrightblack>"
+                        )
+                        yield Completion(
+                            text=completion_text,
+                            start_position=0,
+                            display=display,
+                        )
+
+
+# ─── prompt_toolkit Style ─────────────────────────────────────────────────────
+
+PT_STYLE = PTStyle.from_dict({
+    # Prompt itself
+    "prompt":          "#7C3AED bold",
+    "session-title":   "#4B5563",
+    # Completion menu
+    "completion-menu.completion":          "bg:#1E1B4B #E2E8F0",
+    "completion-menu.completion.current":  "bg:#7C3AED #ffffff bold",
+    "completion-menu.meta.completion":     "bg:#111827 #6B7280",
+    "completion-menu.meta.completion.current": "bg:#5B21B6 #D1D5DB",
+    "scrollbar.background":                "bg:#1E1B4B",
+    "scrollbar.button":                    "bg:#7C3AED",
+    # Auto-suggest ghost text
+    "auto-suggest":    "#374151",
+})
+
+
+# ─── Persistent PromptSession (module-level singleton) ────────────────────────
+
+_HISTORY_FILE = Path.home() / ".cowork" / "input_history"
+_HISTORY_FILE.parent.mkdir(exist_ok=True)
+
+_prompt_session: Optional[PromptSession] = None
+
+
+def _get_prompt_session() -> PromptSession:
+    """Return (or lazily create) the shared PromptSession with persistent history."""
+    global _prompt_session
+    if _prompt_session is None:
+        _prompt_session = PromptSession(
+            history=FileHistory(str(_HISTORY_FILE)),
+            completer=CoworkCompleter(),
+            auto_suggest=AutoSuggestFromHistory(),
+            style=PT_STYLE,
+            complete_while_typing=True,
+            enable_history_search=True,   # Ctrl+R incremental search
+            mouse_support=False,
+            wrap_lines=True,
+        )
+    return _prompt_session
+
+
 # ─── Input Prompt ─────────────────────────────────────────────────────────────
 
 def get_user_input(session_title: str = "New Session") -> str:
-    """Get user input with a styled prompt."""
-    console.print()
+    """
+    Get user input using prompt_toolkit for:
+    - '/' autocomplete with command descriptions
+    - Up/Down arrow history navigation
+    - '#' hashtag pill suggestions
+    - Ctrl+R incremental history search
+    - Ghost text auto-suggest from history
+    """
+    console.print()  # blank line before prompt
+
+    # Build the prompt tokens (displayed left of cursor)
+    title_short = session_title[:32]
+    prompt_tokens = [
+        ("class:prompt",        "❯ "),
+        ("class:session-title", f"{title_short}  "),
+    ]
+
     try:
-        user_input = Prompt.ask(
-            f"[primary]❯[/primary] [dim_text]{session_title[:30]}[/dim_text]",
-            console=console,
+        session = _get_prompt_session()
+        user_input = session.prompt(
+            prompt_tokens,
+            style=PT_STYLE,
         )
         return user_input.strip()
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt:
         return "/exit"
+    except EOFError:
+        return "/exit"
+    except Exception:
+        # Fallback to plain input if prompt_toolkit fails
+        try:
+            return input(f"❯ {title_short}  ").strip()
+        except (KeyboardInterrupt, EOFError):
+            return "/exit"

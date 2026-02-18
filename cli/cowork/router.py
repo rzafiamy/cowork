@@ -17,6 +17,7 @@ DOMAINS = [
     "DATA_AND_UTILITY",
     "SESSION_SCRATCHPAD",
     "APP_CONNECTORS",
+    "WORKSPACE_TOOLS",   # Filesystem-backed session workspace (artifacts, notes, context)
     "CONVERSATIONAL",
     "ALL_TOOLS",
     # ── External (Paid API) ───────────────────────────────────────────────────
@@ -48,6 +49,7 @@ Available categories:
 - DATA_AND_UTILITY: Math calculations, charts, diagrams, time/date
 - SESSION_SCRATCHPAD: Storing/retrieving large data within the session
 - APP_CONNECTORS: Notes, Kanban tasks, calendar events, file storage
+- WORKSPACE_TOOLS: Write/read files to the session workspace folder, save notes, update session context, search across sessions
 - CONVERSATIONAL: Simple chat, greetings, opinions (NO tools needed)
 - ALL_TOOLS: When intent is ambiguous or multiple domains are needed
 
@@ -147,6 +149,8 @@ class MetaRouter:
                 categories.append("DATA_AND_UTILITY")
             if any(w in p for w in ["save", "store", "remember", "scratchpad", "ref:"]):
                 categories.append("SESSION_SCRATCHPAD")
+            if any(w in p for w in ["workspace", "artifact", "write file", "save file", "session note", "context.md"]):
+                categories.append("WORKSPACE_TOOLS")
             if any(w in p for w in ["note", "task", "kanban", "calendar", "event", "file", "write"]):
                 categories.append("APP_CONNECTORS")
             if any(w in p for w in ["image", "picture", "photo", "movie"]):
