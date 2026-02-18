@@ -17,7 +17,9 @@ CONFIG_DIR  = Path.home() / ".cowork"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 SESSIONS_DIR = CONFIG_DIR / "sessions"
 SCRATCHPAD_DIR = CONFIG_DIR / "scratchpad"
-JOBS_FILE   = CONFIG_DIR / "jobs.json"
+JOBS_FILE        = CONFIG_DIR / "jobs.json"
+TOKENS_FILE      = CONFIG_DIR / "tokens.json"
+AI_PROFILES_FILE = CONFIG_DIR / "ai_profiles.json"
 
 def _ensure_dirs() -> None:
     CONFIG_DIR.mkdir(exist_ok=True)
@@ -433,3 +435,226 @@ class JobManager:
         for j in to_remove:
             del self._jobs[j.job_id]
         self._save()
+
+
+# ─── Token Tracker ────────────────────────────────────────────────────────────
+
+class TokenTracker:
+    """
+    Tracks cumulative token usage per (endpoint, model) pair.
+    Persists to ~/.cowork/tokens.json.
+    """
+
+    def __init__(self) -> None:
+        self._data: dict[str, dict] = {}  # key: "endpoint|model"
+        self._load()
+
+    def _load(self) -> None:
+        if TOKENS_FILE.exists():
+            try:
+                with open(TOKENS_FILE) as f:
+                    self._data = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                self._data = {}
+
+    def _save(self) -> None:
+        try:
+            with open(TOKENS_FILE, "w") as f:
+                json.dump(self._data, f, indent=2)
+        except OSError:
+            pass
+
+    def _key(self, endpoint: str, model: str) -> str:
+        return f"{endpoint.rstrip('/')}|{model}"
+
+    def record(self, endpoint: str, model: str, usage: dict) -> None:
+        """
+        Record token usage from an API response's usage dict.
+        usage = {"prompt_tokens": int, "completion_tokens": int, "total_tokens": int}
+        """
+        if not usage:
+            return
+        key = self._key(endpoint, model)
+        if key not in self._data:
+            self._data[key] = {
+                "endpoint": endpoint.rstrip("/"),
+                "model": model,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "request_count": 0,
+                "first_seen": datetime.utcnow().isoformat(),
+                "last_seen": datetime.utcnow().isoformat(),
+            }
+        entry = self._data[key]
+        entry["prompt_tokens"]     += usage.get("prompt_tokens", 0)
+        entry["completion_tokens"] += usage.get("completion_tokens", 0)
+        entry["total_tokens"]      += usage.get("total_tokens", 0)
+        entry["request_count"]     += 1
+        entry["last_seen"]          = datetime.utcnow().isoformat()
+        self._save()
+
+    def get_all(self) -> list[dict]:
+        """Return all tracked entries sorted by total tokens descending."""
+        return sorted(self._data.values(), key=lambda x: x["total_tokens"], reverse=True)
+
+    def get_totals(self) -> dict:
+        """Return aggregate totals across all models."""
+        totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "request_count": 0}
+        for entry in self._data.values():
+            for k in totals:
+                totals[k] += entry.get(k, 0)
+        return totals
+
+    def reset(self) -> None:
+        """Clear all token usage stats."""
+        self._data = {}
+        self._save()
+
+
+# ─── AI Profile Manager ───────────────────────────────────────────────────────
+
+class AIProfile:
+    """Represents a named AI endpoint + model configuration."""
+
+    def __init__(
+        self,
+        name: str,
+        endpoint: str,
+        model: str,
+        api_key: str = "",
+        description: str = "",
+    ) -> None:
+        self.name = name
+        self.endpoint = endpoint.rstrip("/")
+        self.model = model
+        self.api_key = api_key
+        self.description = description
+        self.created_at = datetime.utcnow().isoformat()
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "endpoint": self.endpoint,
+            "model": self.model,
+            "api_key": self.api_key,
+            "description": self.description,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "AIProfile":
+        p = cls(
+            name=data["name"],
+            endpoint=data["endpoint"],
+            model=data["model"],
+            api_key=data.get("api_key", ""),
+            description=data.get("description", ""),
+        )
+        p.created_at = data.get("created_at", p.created_at)
+        return p
+
+
+class AIProfileManager:
+    """
+    Manages multiple named AI profiles (endpoint + model + key).
+    Persists to ~/.cowork/ai_profiles.json.
+    Supports add, remove, list, and switch operations.
+    """
+
+    def __init__(self, config: "ConfigManager") -> None:
+        self.config = config
+        self._profiles: dict[str, AIProfile] = {}
+        self._active: Optional[str] = None
+        self._load()
+
+    def _load(self) -> None:
+        if AI_PROFILES_FILE.exists():
+            try:
+                with open(AI_PROFILES_FILE) as f:
+                    raw = json.load(f)
+                self._profiles = {
+                    name: AIProfile.from_dict(data)
+                    for name, data in raw.get("profiles", {}).items()
+                }
+                self._active = raw.get("active")
+            except (json.JSONDecodeError, OSError, KeyError):
+                self._profiles = {}
+                self._active = None
+
+    def _save(self) -> None:
+        try:
+            with open(AI_PROFILES_FILE, "w") as f:
+                json.dump({
+                    "profiles": {name: p.to_dict() for name, p in self._profiles.items()},
+                    "active": self._active,
+                }, f, indent=2)
+        except OSError:
+            pass
+
+    def add(
+        self,
+        name: str,
+        endpoint: str,
+        model: str,
+        api_key: str = "",
+        description: str = "",
+    ) -> AIProfile:
+        """Add or update a named profile."""
+        profile = AIProfile(name=name, endpoint=endpoint, model=model, api_key=api_key, description=description)
+        self._profiles[name] = profile
+        self._save()
+        return profile
+
+    def remove(self, name: str) -> bool:
+        """Remove a profile by name. Returns True if removed."""
+        if name in self._profiles:
+            del self._profiles[name]
+            if self._active == name:
+                self._active = None
+            self._save()
+            return True
+        return False
+
+    def switch(self, name: str) -> Optional[AIProfile]:
+        """
+        Switch to a named profile. Updates the live ConfigManager.
+        Returns the profile if found, else None.
+        """
+        if name not in self._profiles:
+            return None
+        profile = self._profiles[name]
+        self._active = name
+        self._save()
+        # Apply to live config
+        self.config.set("api_endpoint", profile.endpoint)
+        self.config.set("model_text", profile.model)
+        self.config.set("model_router", profile.model)
+        self.config.set("model_compress", profile.model)
+        if profile.api_key:
+            self.config.set("api_key", profile.api_key)
+        return profile
+
+    def list_all(self) -> list[dict]:
+        """Return all profiles as dicts, marking the active one."""
+        result = []
+        for name, p in self._profiles.items():
+            d = p.to_dict()
+            d["active"] = (name == self._active)
+            result.append(d)
+        return sorted(result, key=lambda x: x["name"])
+
+    def get_active(self) -> Optional[AIProfile]:
+        if self._active and self._active in self._profiles:
+            return self._profiles[self._active]
+        return None
+
+    def snapshot_current(self, config: "ConfigManager", name: str = "default") -> AIProfile:
+        """Save the current config as a named profile."""
+        return self.add(
+            name=name,
+            endpoint=config.api_endpoint,
+            model=config.model_text,
+            api_key=config.api_key,
+            description="Saved from current config",
+        )

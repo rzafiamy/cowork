@@ -410,7 +410,110 @@ def render_job_dashboard(jobs: list[Any]) -> None:
     console.print(table)
 
 
-# ─── Error Display ────────────────────────────────────────────────────────────
+# ─── Token Usage Display ────────────────────────────────────────────────────────────
+
+def render_token_usage(entries: list[dict], totals: dict) -> None:
+    """Render a rich table of token usage per model/endpoint."""
+    if not entries:
+        console.print(Panel(
+            "[muted]No token usage recorded yet. Start chatting to see stats![/muted]",
+            title="[accent]📊 Token Usage[/accent]",
+            border_style="accent",
+        ))
+        return
+
+    table = Table(
+        title="📊 Token Usage by Model / Endpoint",
+        box=box.ROUNDED,
+        border_style="accent",
+        header_style="accent",
+        show_lines=True,
+    )
+    table.add_column("Model",              style="highlight",  min_width=18)
+    table.add_column("Endpoint",           style="dim_text",   min_width=22)
+    table.add_column("Requests",           justify="right",    style="muted")
+    table.add_column("Prompt ↑",           justify="right",    style="router")
+    table.add_column("Completion ↓",       justify="right",    style="tool")
+    table.add_column("Total",              justify="right",    style="bold_white")
+    table.add_column("Last Used",          style="dim_text")
+
+    grand_total = totals.get("total_tokens", 0)
+
+    for entry in entries:
+        total = entry.get("total_tokens", 0)
+        pct = (total / grand_total * 100) if grand_total else 0
+        bar_len = int(pct / 10)  # 0-10 blocks
+        bar = "█" * bar_len + "░" * (10 - bar_len)
+        last_seen = entry.get("last_seen", "")[:16].replace("T", " ")
+        table.add_row(
+            entry.get("model", "unknown"),
+            entry.get("endpoint", ""),
+            f"{entry.get('request_count', 0):,}",
+            f"{entry.get('prompt_tokens', 0):,}",
+            f"{entry.get('completion_tokens', 0):,}",
+            f"{total:,}  [dim]{bar} {pct:.0f}%[/dim]",
+            last_seen,
+        )
+
+    # Totals footer
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="muted", justify="right", width=18)
+    grid.add_column()
+    grid.add_row("Total Requests",    f"[bold_white]{totals.get('request_count', 0):,}[/bold_white]")
+    grid.add_row("Total Prompt",      f"[router]{totals.get('prompt_tokens', 0):,}[/router] tokens")
+    grid.add_row("Total Completion",  f"[tool]{totals.get('completion_tokens', 0):,}[/tool] tokens")
+    grid.add_row("Grand Total",       f"[bold_white]{grand_total:,}[/bold_white] tokens")
+
+    console.print(table)
+    console.print(Panel(
+        grid,
+        title="[accent]Σ Cumulative Totals[/accent]",
+        border_style="accent",
+        padding=(0, 2),
+    ))
+
+
+# ─── AI Profile Display ────────────────────────────────────────────────────────────
+
+def render_ai_profiles(profiles: list[dict]) -> None:
+    """Render a table of saved AI profiles."""
+    if not profiles:
+        console.print(Panel(
+            "[muted]No AI profiles saved yet.\n\n"
+            "[dim_text]Use [highlight]/ai add <name> <endpoint> <model>[/highlight] to add one.[/dim_text]",
+            title="[primary]🤖 AI Profiles[/primary]",
+            border_style="primary",
+        ))
+        return
+
+    table = Table(
+        title="🤖 AI Profiles",
+        box=box.ROUNDED,
+        border_style="primary",
+        header_style="primary",
+        show_lines=True,
+    )
+    table.add_column("Active",       justify="center", width=6)
+    table.add_column("Name",         style="highlight", min_width=12)
+    table.add_column("Model",        style="bold_white", min_width=16)
+    table.add_column("Endpoint",     style="dim_text",   min_width=24)
+    table.add_column("API Key",      style="muted",      width=12)
+    table.add_column("Description",  style="text")
+
+    for p in profiles:
+        active_mark = "[success]★ active[/success]" if p.get("active") else "[dim_text]○[/dim_text]"
+        key_display = "●●●●●●●●" if p.get("api_key") else "[muted](shared)[/muted]"
+        table.add_row(
+            active_mark,
+            p["name"],
+            p["model"],
+            p["endpoint"],
+            key_display,
+            p.get("description", "")[:40],
+        )
+
+    console.print(table)
+
 
 def render_error(message: str, hint: str = "") -> None:
     content = f"[error]{message}[/error]"
@@ -432,19 +535,26 @@ def render_warning(message: str) -> None:
 def render_help() -> None:
     """Render the help panel with all commands."""
     commands = [
-        ("/help", "Show this help message"),
-        ("/new", "Start a new session"),
-        ("/sessions", "List all sessions"),
-        ("/load <id>", "Load a session by ID or number"),
-        ("/memory", "Show Memoria status"),
-        ("/memory clear", "Clear all memory for current user"),
-        ("/jobs", "Show Sentinel job dashboard"),
-        ("/config", "Show current configuration"),
-        ("/config set <key> <value>", "Update a configuration value"),
-        ("/scratchpad", "List scratchpad contents"),
-        ("/trace", "Show last job trace"),
-        ("/clear", "Clear the terminal"),
-        ("/exit or /quit", "Exit Cowork"),
+        ("/help",                          "Show this help message"),
+        ("/new",                            "Start a new session"),
+        ("/sessions",                       "List all sessions"),
+        ("/load <id>",                      "Load a session by ID or number"),
+        ("/memory",                         "Show Memoria status"),
+        ("/memory clear",                   "Clear all memory for current user"),
+        ("/jobs",                           "Show Sentinel job dashboard"),
+        ("/config",                         "Show current configuration"),
+        ("/config set <key> <value>",        "Update a configuration value"),
+        ("/tokens",                         "Show token usage per model/endpoint"),
+        ("/tokens reset",                   "Reset all token usage counters"),
+        ("/ai",                             "List saved AI profiles"),
+        ("/ai add <name> <endpoint> <model>","Add a new AI profile"),
+        ("/ai switch <name>",               "Switch to a saved AI profile"),
+        ("/ai remove <name>",               "Remove a saved AI profile"),
+        ("/ai save <name>",                 "Save current config as a profile"),
+        ("/scratchpad",                     "List scratchpad contents"),
+        ("/trace",                          "Show last job trace"),
+        ("/clear",                          "Clear the terminal"),
+        ("/exit or /quit",                  "Exit Cowork"),
     ]
 
     table = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
@@ -530,6 +640,13 @@ SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/jobs",                    "Show Sentinel job queue dashboard"),
     ("/config",                  "Show current configuration"),
     ("/config set ",             "Set a config value  e.g. /config set stream false"),
+    ("/tokens",                  "Show token usage per model / endpoint"),
+    ("/tokens reset",            "Reset all token usage counters"),
+    ("/ai",                      "List saved AI profiles"),
+    ("/ai add ",                 "Add AI profile  e.g. /ai add gpt4 https://api.openai.com/v1 gpt-4o"),
+    ("/ai switch ",              "Switch to a profile  e.g. /ai switch gpt4"),
+    ("/ai remove ",              "Remove a profile  e.g. /ai remove gpt4"),
+    ("/ai save ",                "Save current config as profile  e.g. /ai save myprofile"),
     ("/scratchpad",              "List scratchpad contents for this session"),
     ("/trace",                   "Show execution trace of last job"),
     ("/clear",                   "Clear the terminal screen"),

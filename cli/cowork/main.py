@@ -10,6 +10,8 @@ Usage:
     cowork config             # Show/edit config
     cowork memory             # Show memory status
     cowork jobs               # Show job dashboard
+    cowork tokens             # Show token usage per model/endpoint
+    cowork ai                 # Manage AI profiles (endpoints/models)
 """
 
 import asyncio
@@ -25,7 +27,7 @@ from rich.rule import Rule
 
 from .agent import GeneralPurposeAgent
 from .api_client import APIClient, APIError
-from .config import AgentJob, ConfigManager, JobManager, Scratchpad, Session
+from .config import AgentJob, AIProfileManager, ConfigManager, JobManager, Scratchpad, Session, TokenTracker
 from .memoria import Memoria
 from .workspace import WorkspaceSession, workspace_manager, WORKSPACE_ROOT
 from .ui import (
@@ -35,6 +37,7 @@ from .ui import (
     get_user_input,
     print_banner,
     print_welcome,
+    render_ai_profiles,
     render_config,
     render_error,
     render_help,
@@ -44,6 +47,7 @@ from .ui import (
     render_routing_info,
     render_session_list,
     render_success,
+    render_token_usage,
     render_user_message,
     render_warning,
     run_setup_wizard,
@@ -52,8 +56,20 @@ from .ui import (
 # ─── Global State ─────────────────────────────────────────────────────────────
 _config = ConfigManager()
 _job_manager = JobManager(max_jobs=_config.get("max_concurrent_jobs", 10))
+_token_tracker = TokenTracker()
+_ai_profiles = AIProfileManager(_config)
 _last_trace: Optional[dict] = None
 _last_job: Optional[AgentJob] = None
+
+def _make_api_client() -> "APIClient":
+    """Create an APIClient wired to the global token tracker."""
+    def _token_cb(model: str, usage: dict) -> None:
+        _token_tracker.record(_config.api_endpoint, model, usage)
+    return APIClient(
+        endpoint=_config.api_endpoint,
+        api_key=_config.api_key,
+        token_callback=_token_cb,
+    )
 
 
 # ─── Async Agent Runner ───────────────────────────────────────────────────────
@@ -196,13 +212,14 @@ async def handle_command(
     scratchpad: Scratchpad,
     memoria: Memoria,
     sessions_list: list[dict],
-) -> tuple[bool, Optional[Session]]:
+) -> tuple[bool, Optional[Session], bool]:
     """
     Handle slash commands.
-    Returns (should_continue, new_session_if_changed).
+    Returns (should_continue, new_session_if_changed, needs_rebuild).
     """
     parts = cmd.strip().split(maxsplit=2)
     command = parts[0].lower()
+    needs_rebuild = False
 
     if command in ("/exit", "/quit", "/q"):
         console.print()
@@ -210,7 +227,7 @@ async def handle_command(
         console.print("[primary]  👋 Goodbye! Your sessions are saved.[/primary]")
         console.print(Rule(style="primary"))
         console.print()
-        return False, None
+        return False, None, False
 
     elif command == "/help":
         render_help()
@@ -236,7 +253,7 @@ async def handle_command(
             f"✨ New session started: {new_session.session_id[:8]}\n"
             f"📂 Workspace: workspace/{ws.slug}/"
         )
-        return True, new_session
+        return True, new_session, False
 
     elif command == "/sessions":
         updated = Session.list_all()
@@ -272,7 +289,7 @@ async def handle_command(
                             loaded._ws = ws
                             render_success(f"📂 Workspace: workspace/{ws.slug}/")
                         break
-                return True, loaded
+                return True, loaded, False
             else:
                 render_error(f"Session '{target}' not found.")
 
@@ -394,10 +411,75 @@ async def handle_command(
         else:
             console.print("[muted]No trace available yet.[/muted]")
 
+    elif command == "/tokens":
+        if len(parts) > 1 and parts[1] == "reset":
+            if click.confirm("Reset all token usage counters?", default=False):
+                _token_tracker.reset()
+                render_success("🧹 Token usage counters reset.")
+        else:
+            render_token_usage(_token_tracker.get_all(), _token_tracker.get_totals())
+
+    elif command == "/ai":
+        sub = parts[1].lower() if len(parts) > 1 else ""
+
+        if not sub or sub == "list":
+            render_ai_profiles(_ai_profiles.list_all())
+
+        elif sub == "add":
+            # /ai add <name> <endpoint> <model> [description...]
+            raw = cmd.split(maxsplit=5)
+            if len(raw) < 5:
+                render_error(
+                    "Usage: /ai add <name> <endpoint> <model> [description]",
+                    hint="Example: /ai add gpt4 https://api.openai.com/v1 gpt-4o My GPT-4 profile",
+                )
+            else:
+                name, endpoint, model = raw[2], raw[3], raw[4]
+                description = raw[5] if len(raw) > 5 else ""
+                _ai_profiles.add(name=name, endpoint=endpoint, model=model, description=description)
+                render_success(f"✅ AI profile '{name}' saved ({model} @ {endpoint})")
+
+        elif sub == "switch":
+            if len(parts) < 3:
+                render_error("Usage: /ai switch <name>")
+            else:
+                name = parts[2]
+                profile = _ai_profiles.switch(name)
+                if profile:
+                    render_success(
+                        f"🤖 Switched to profile '[highlight]{name}[/highlight]'\n"
+                        f"   Model: {profile.model}\n"
+                        f"   Endpoint: {profile.endpoint}"
+                    )
+                    needs_rebuild = True
+                else:
+                    render_error(f"Profile '{name}' not found.", hint="Use /ai to list available profiles.")
+
+        elif sub == "remove":
+            if len(parts) < 3:
+                render_error("Usage: /ai remove <name>")
+            else:
+                name = parts[2]
+                if _ai_profiles.remove(name):
+                    render_success(f"🗑️  Profile '{name}' removed.")
+                else:
+                    render_error(f"Profile '{name}' not found.")
+
+        elif sub == "save":
+            name = parts[2] if len(parts) > 2 else "default"
+            _ai_profiles.snapshot_current(_config, name)
+            render_success(
+                f"💾 Saved current config as profile '[highlight]{name}[/highlight]'\n"
+                f"   Model: {_config.model_text}\n"
+                f"   Endpoint: {_config.api_endpoint}"
+            )
+        else:
+            render_warning(f"Unknown /ai subcommand: {sub}. Use /ai, /ai add, /ai switch, /ai remove, /ai save.")
+
     else:
         render_warning(f"Unknown command: {command}. Type /help for available commands.")
 
-    return True, None
+    return True, None, needs_rebuild
 
 
 # ─── Interactive Chat Loop ────────────────────────────────────────────────────
@@ -420,7 +502,7 @@ async def interactive_loop(
     else:
         scratchpad = Scratchpad(session.session_id)
     user_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, _config.api_key or "anonymous"))
-    memoria = Memoria(user_id, session.session_id, api_client, _config)
+    _memoria = Memoria(user_id, session.session_id, api_client, _config)
 
     sessions_list = Session.list_all()
 
@@ -446,11 +528,17 @@ async def interactive_loop(
 
         # Slash command
         if user_input.startswith("/"):
-            should_continue, new_session = await handle_command(
-                user_input, session, api_client, scratchpad, memoria, sessions_list
+            should_continue, new_session, needs_rebuild = await handle_command(
+                user_input, session, api_client, scratchpad, _memoria, sessions_list
             )
             if not should_continue:
                 break
+
+            if needs_rebuild:
+                await api_client.close()
+                api_client = _make_api_client()
+                _memoria.api_client = api_client
+
             if new_session:
                 session = new_session
                 # Use workspace scratchpad if available
@@ -464,7 +552,7 @@ async def interactive_loop(
                     scratchpad._load_index()
                 else:
                     scratchpad = Scratchpad(session.session_id)
-                memoria = Memoria(user_id, session.session_id, api_client, _config)
+                _memoria = Memoria(user_id, session.session_id, api_client, _config)
             continue
 
         # Hashtag detection (Action Pills)
@@ -490,7 +578,7 @@ async def interactive_loop(
             session=session,
             api_client=api_client,
             scratchpad=scratchpad,
-            memoria=memoria,
+            memoria=_memoria,
             show_routing=True,
         )
 
@@ -550,10 +638,7 @@ def chat(session_id: Optional[str], no_banner: bool) -> None:
         session._ws = ws
         console.print(f"  [dim_text]📂 Workspace: workspace/{ws.slug}/[/dim_text]")
 
-    api_client = APIClient(
-        endpoint=_config.api_endpoint,
-        api_key=_config.api_key,
-    )
+    api_client = _make_api_client()
 
     try:
         asyncio.run(interactive_loop(session, api_client))
@@ -584,7 +669,7 @@ def run(prompt: str, session_id: Optional[str], model: Optional[str], no_stream:
     if not session:
         session = Session(title="One-shot")
 
-    api_client = APIClient(endpoint=_config.api_endpoint, api_key=_config.api_key)
+    api_client = _make_api_client()
     scratchpad = Scratchpad(session.session_id)
     user_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, _config.api_key or "anonymous"))
     memoria = Memoria(user_id, session.session_id, api_client, _config)
@@ -641,7 +726,7 @@ def memory() -> None:
     if not _config.is_configured():
         render_error("Not configured.")
         return
-    api_client = APIClient(endpoint=_config.api_endpoint, api_key=_config.api_key)
+    api_client = _make_api_client()
     user_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, _config.api_key or "anonymous"))
     mem = Memoria(user_id, "status_check", api_client, _config)
     render_memory_status(mem.get_triplet_count(), mem.get_summary())
@@ -681,7 +766,7 @@ def ping() -> None:
         render_error("Not configured. Run 'cowork setup' first.")
         return
 
-    api_client = APIClient(endpoint=_config.api_endpoint, api_key=_config.api_key)
+    api_client = _make_api_client()
 
     async def _ping() -> None:
         console.print(f"[muted]Pinging {_config.api_endpoint}...[/muted]")
@@ -696,6 +781,60 @@ def ping() -> None:
         await api_client.close()
 
     asyncio.run(_ping())
+
+
+@cli.command()
+@click.option("--reset", is_flag=True, help="Reset all token usage counters")
+def tokens(reset: bool) -> None:
+    """Show cumulative token usage per model/endpoint."""
+    print_banner()
+    if reset:
+        if click.confirm("Reset all token usage counters?", default=False):
+            _token_tracker.reset()
+            render_success("🧹 Token usage counters reset.")
+    else:
+        render_token_usage(_token_tracker.get_all(), _token_tracker.get_totals())
+
+
+@cli.command()
+@click.argument("action", type=click.Choice(["list", "add", "switch", "remove", "save"]), default="list")
+@click.argument("args", nargs=-1)
+def ai(action: str, args: tuple) -> None:
+    """Manage AI profiles (endpoints, models, keys)."""
+    print_banner()
+    if action == "list":
+        render_ai_profiles(_ai_profiles.list_all())
+    elif action == "add":
+        if len(args) < 3:
+            render_error("Usage: cowork ai add <name> <endpoint> <model> [description]")
+            return
+        name, endpoint, model = args[0], args[1], args[2]
+        desc = " ".join(args[3:]) if len(args) > 3 else ""
+        _ai_profiles.add(name, endpoint, model, description=desc)
+        render_success(f"✅ AI profile '{name}' saved.")
+    elif action == "switch":
+        if not args:
+            render_error("Usage: cowork ai switch <name>")
+            return
+        name = args[0]
+        profile = _ai_profiles.switch(name)
+        if profile:
+            render_success(f"🤖 Switched to profile '{name}' ({profile.model})")
+        else:
+            render_error(f"Profile '{name}' not found.")
+    elif action == "remove":
+        if not args:
+            render_error("Usage: cowork ai remove <name>")
+            return
+        name = args[0]
+        if _ai_profiles.remove(name):
+            render_success(f"🗑️  Profile '{name}' removed.")
+        else:
+            render_error(f"Profile '{name}' not found.")
+    elif action == "save":
+        name = args[0] if args else "default"
+        _ai_profiles.snapshot_current(_config, name)
+        render_success(f"💾 Saved current config as profile '{name}'.")
 
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────

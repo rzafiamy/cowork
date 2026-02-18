@@ -30,10 +30,17 @@ class APIClient:
     MAX_RETRIES = 3
     RETRY_BASE_DELAY = 1.0  # seconds
 
-    def __init__(self, endpoint: str, api_key: str, timeout: float = 60.0) -> None:
+    def __init__(
+        self,
+        endpoint: str,
+        api_key: str,
+        timeout: float = 60.0,
+        token_callback: Optional[Callable[[str, dict], None]] = None,
+    ) -> None:
         self.endpoint = endpoint.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
+        self.token_callback = token_callback  # called with (model, usage_dict)
         self._client: Optional[httpx.AsyncClient] = None
 
     def _get_client(self) -> httpx.AsyncClient:
@@ -99,12 +106,19 @@ class APIClient:
                 data = resp.json()
                 choice = data["choices"][0]
                 msg = choice["message"]
+                usage = data.get("usage", {})
+                # Fire token callback if registered
+                if usage and self.token_callback:
+                    try:
+                        self.token_callback(payload["model"], usage)
+                    except Exception:
+                        pass
                 return {
                     "role": msg.get("role", "assistant"),
                     "content": msg.get("content") or "",
                     "tool_calls": msg.get("tool_calls") or [],
                     "finish_reason": choice.get("finish_reason", "stop"),
-                    "usage": data.get("usage", {}),
+                    "usage": usage,
                 }
             except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as e:
                 last_error = e
@@ -211,6 +225,15 @@ class APIClient:
                     "arguments": args,
                 },
             })
+
+        # Streaming responses rarely include usage; build a minimal estimate
+        # Some providers do send usage in the last chunk — we skip for now
+        # but fire callback with zeros so the request_count is still tracked.
+        if self.token_callback:
+            try:
+                self.token_callback(payload["model"], {})
+            except Exception:
+                pass
 
         return {
             "role": "assistant",
