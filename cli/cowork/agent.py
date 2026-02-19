@@ -401,7 +401,15 @@ class GeneralPurposeAgent:
 
                 if repeat_count >= 2:
                     self.status_cb("⚠️  Loop detected: repeating tool calls. Breaking.")
-                    final_response = content or "I'm sorry, I seem to be repeating myself. Let's try a different approach."
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "[SYSTEM NOTICE] You appear to be repeating the same tool call in a loop. "
+                            "Stop immediately. State clearly what has been accomplished so far, "
+                            "what is still missing, and ask the user how to proceed."
+                        ),
+                    })
+                    final_response = content or "I seem to be caught in a loop. Let me know how you'd like to proceed."
                     break
 
                 max_per_step = self.config.get("max_tool_calls_per_step", OP_DEFAULTS["max_tool_calls_per_step"])
@@ -471,8 +479,38 @@ class GeneralPurposeAgent:
             trace.add_step("final_answer", {"length": len(content), "finish_reason": finish_reason})
             break
 
+        # ── Step-limit recovery ───────────────────────────────────────────────
         if not final_response:
-            final_response = "I've completed the requested operations. Please let me know if you need anything else."
+            self.status_cb(f"⏱️  Step limit ({max_steps}) reached — requesting self-assessment...")
+            trace.add_step("step_limit_reached", {"max_steps": max_steps, "total_tool_calls": total_tool_calls})
+            try:
+                limit_messages = messages + [{
+                    "role": "user",
+                    "content": (
+                        f"[SYSTEM NOTICE] You have reached the maximum step limit ({max_steps} steps). "
+                        "You MUST now provide a final response to the user — do NOT call any more tools. "
+                        "In your response you MUST:\n"
+                        "1. Clearly state whether the user's original goal was FULLY ACHIEVED, PARTIALLY ACHIEVED, or NOT ACHIEVED.\n"
+                        "2. Summarize concisely what was accomplished so far.\n"
+                        "3. If the goal was not fully achieved, list exactly what remains to be done.\n"
+                        "4. Ask the user if they would like to continue in a new turn.\n"
+                        "Do NOT invent results. Do NOT hallucinate. Only report what was actually done."
+                    ),
+                }]
+                limit_result = await self.api_client.chat(
+                    messages=limit_messages,
+                    model=self.config.get("model_text"),
+                    temperature=0.1,
+                    tools=None,   # no tools — force text answer
+                    max_tokens=1024,
+                )
+                final_response = limit_result.get("content", "").strip()
+            except Exception as e:
+                final_response = (
+                    f"⚠️ I reached the maximum step limit ({max_steps} steps) without fully completing your request. "
+                    f"Here is where I stopped: the last tool calls are visible in the trace above. "
+                    f"Please reply to continue where I left off."
+                )
 
         trace.finish()
         job.steps = len([s for s in trace.steps if s["type"] == "react_step_start"])
