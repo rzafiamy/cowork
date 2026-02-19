@@ -398,6 +398,14 @@ class WorkspaceManager:
             return True
         return False
 
+    def clear_all(self) -> int:
+        """Delete all workspace session folders. Returns count of deleted sessions."""
+        count = 0
+        for slug in self._existing_slugs():
+            if self.delete(slug):
+                count += 1
+        return count
+
     def search(self, query: str) -> list[dict]:
         """Full-text search across all session context files and notes."""
         query_lower = query.lower()

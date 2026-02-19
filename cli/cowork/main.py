@@ -426,7 +426,9 @@ async def handle_command(
     elif command == "/workspace":
         from rich.table import Table
         from rich import box
-        if len(parts) > 1 and parts[1] == "list":
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        
+        if sub == "list":
             sessions = workspace_manager.list_all()
             if not sessions:
                 console.print("[muted]No workspace sessions found.[/muted]")
@@ -441,7 +443,7 @@ async def handle_command(
                     table.add_row(s["slug"], s["title"][:40], str(s["message_count"]), updated)
                 console.print(table)
                 console.print(f"[dim_text]  📂 Root: {WORKSPACE_ROOT}[/dim_text]")
-        elif len(parts) > 1 and parts[1] == "search" and len(parts) > 2:
+        elif sub == "search" and len(parts) > 2:
             query = parts[2]
             results = workspace_manager.search(query)
             if not results:
@@ -451,12 +453,38 @@ async def handle_command(
                     console.print(f"  [highlight]{r['slug']}/[/highlight] — {r['title']}")
                     for m in r["matches"]:
                         console.print(f"    [dim_text]• {m}[/dim_text]")
-        elif len(parts) > 1 and parts[1] == "open":
+        elif sub == "open":
             ws = getattr(session, '_ws', None)
             if ws:
                 console.print(f"  [success]📂 Session workspace:[/success] [highlight]{ws.path}[/highlight]")
             else:
                 console.print(f"  [muted]📂 Workspace root:[/muted] [highlight]{WORKSPACE_ROOT}[/highlight]")
+        elif sub == "clean":
+            if click.confirm("⚠️  Are you sure you want to delete ALL sessions and workspace folders? This cannot be undone.", default=False):
+                with ThinkingSpinner("Cleaning workspace"):
+                    # 1. Clear workspace folders
+                    ws_count = workspace_manager.clear_all()
+                    
+                    # 2. Clear regular sessions
+                    from .config import SESSIONS_DIR, SCRATCHPAD_DIR
+                    import shutil
+                    s_count = 0
+                    for p in SESSIONS_DIR.glob("*.json"):
+                        p.unlink()
+                        s_count += 1
+                    
+                    # 3. Clear scratchpads
+                    for p in SCRATCHPAD_DIR.iterdir():
+                        if p.is_dir():
+                            shutil.rmtree(p)
+                
+                render_success(f"🧹 Workspace cleaned. Deleted {ws_count} workspace folders and {s_count} session files.")
+                # We should probably reset the current session too
+                new_session = Session(title="New Session")
+                new_session.save()
+                ws = workspace_manager.create("New Session")
+                new_session._ws = ws
+                return True, new_session, False
         else:
             ws = getattr(session, '_ws', None)
             if ws:
@@ -471,6 +499,7 @@ async def handle_command(
             console.print("[dim_text]  /workspace list          — list all sessions[/dim_text]")
             console.print("[dim_text]  /workspace search <q>    — search across sessions[/dim_text]")
             console.print("[dim_text]  /workspace open          — show current session path[/dim_text]")
+            console.print("[dim_text]  /workspace clean         — delete all sessions and workspace folders[/dim_text]")
 
     elif command == "/trace":
         if _last_job:
