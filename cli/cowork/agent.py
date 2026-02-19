@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional
 
 from .api_client import APIClient, APIError
 from .config import AgentJob, ConfigManager, FirewallManager, FirewallAction, JobManager, Scratchpad, Session
+from .prompts import AGENT_SYSTEM_PROMPT, COMPRESS_PROMPT, TITLE_GENERATION_PROMPT
 from .memoria import Memoria
 from .router import MetaRouter
 from .theme import (
@@ -32,39 +33,8 @@ from .tools import (
     get_tools_for_categories,
 )
 
-# ─── Agent System Prompt ──────────────────────────────────────────────────────
-
-AGENT_SYSTEM_PROMPT = """You are **Cowork**, a powerful enterprise AI coworker built on the Makix Agentic Architecture.
-
-## 🎭 Persona: The Manager-Worker
-You are a **coordinator**, not a verbose assistant. You:
-- Think step-by-step before acting
-- Use tools efficiently (parallel when possible)
-- Never dump raw data — always synthesize insights
-- Fail loudly with actionable hints, then self-correct
-
-## 🧠 Core Principles
-- **Context is Currency**: Don't waste tokens on raw data
-- **Precision over Creativity**: Be deterministic when routing/compressing
-- **Parallel-First**: Execute independent tools simultaneously
-- **Fail Forward**: On error, self-correct → pivot → ask user → graceful exit
-
-## ⚙️ Tool Usage Rules
-1. Call tools when you need real-time data, calculations, or workspace actions
-2. For large outputs, use scratchpad_save + ref:key pattern
-3. Always check scratchpad_list before assuming data is unavailable
-4. On [GATEWAY ERROR]: fix arguments and retry immediately
-5. On [TOOL ERROR]: try an alternative tool or inform the user
-
-## 📅 Temporal Context
-Current date/time: {current_datetime}
-
-## 🧩 Memory Context
-{memory_context}
-
-## 📋 Session Context
-Session ID: {session_id}
-Messages in context: {message_count}"""
+# ─── Prompts are centralized in prompts.py ───────────────────────────────────
+# Import: AGENT_SYSTEM_PROMPT, COMPRESS_PROMPT, TITLE_GENERATION_PROMPT
 
 # ─── Context Compressor ───────────────────────────────────────────────────────
 
@@ -74,12 +44,7 @@ class ContextCompressor:
     Runs at Temperature 0.1 to preserve factual integrity.
     """
 
-    COMPRESS_PROMPT = """You are a context compression engine. Summarize the following conversation history into a concise, information-dense block. Preserve all key facts, decisions, tool results, and user preferences. Remove conversational filler.
-
-Conversation to compress:
-{history}
-
-Return a dense summary block starting with: [CONVERSATION SUMMARY]"""
+    # Prompt sourced from prompts.py — edit there to change compression behavior.
 
     def __init__(self, api_client: APIClient, config: ConfigManager) -> None:
         self.api_client = api_client
@@ -149,7 +114,7 @@ Return a dense summary block starting with: [CONVERSATION SUMMARY]"""
         for chunk in chunks:
             try:
                 result = await self.api_client.chat(
-                    messages=[{"role": "user", "content": self.COMPRESS_PROMPT.format(history=chunk)}],
+                    messages=[{"role": "user", "content": COMPRESS_PROMPT.format(history=chunk)}],
                     model=self.config.get("model_compress"),
                     temperature=OP_DEFAULTS["temperature_compress"],
                     max_tokens=600,
@@ -469,7 +434,7 @@ class GeneralPurposeAgent:
             result = await self.api_client.chat(
                 messages=[{
                     "role": "user",
-                    "content": f"Generate a short, descriptive title (max 6 words) for a conversation that starts with: '{first_user[:200]}'. Return ONLY the title, no quotes.",
+                    "content": TITLE_GENERATION_PROMPT.format(first_user=first_user[:200]),
                 }],
                 model=self.config.get("model_text"),
                 temperature=OP_DEFAULTS["temperature_chat"],

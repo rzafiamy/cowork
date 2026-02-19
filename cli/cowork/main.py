@@ -708,6 +708,8 @@ async def interactive_loop(
             action_mode = {"categories": ["APP_CONNECTORS"], "pill": "#note"}
         elif "#cron" in user_input.lower() or "#schedule" in user_input.lower():
             action_mode = {"categories": ["CRON_TOOLS"], "pill": "#cron"}
+        elif "#email" in user_input.lower() or "#comms" in user_input.lower():
+            action_mode = {"categories": ["COMMUNICATION_TOOLS"], "pill": "#email"}
 
         if action_mode:
             console.print(f"  [accent]⚡ Action Pill detected: {action_mode['pill']}[/accent]")

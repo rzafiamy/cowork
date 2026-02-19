@@ -5,6 +5,7 @@ Handles .env loading, config file (TOML-like JSON), and session state.
 
 import json
 import os
+import re
 import uuid
 import yaml
 from datetime import datetime
@@ -97,6 +98,10 @@ class ConfigManager:
             "OPENWEATHER_API_KEY",
             "TMDB_API_KEY",
             "TWITTER_BEARER_TOKEN",
+            "SMTP_HOST",
+            "SMTP_PORT",
+            "SMTP_USER",
+            "SMTP_PASS",
         ]
         for _k in _ext_keys:
             val = os.getenv(_k)
@@ -742,6 +747,19 @@ tools:
     action: ask
     description: "Confirm scheduling a recurring or future task"
 
+  - name: smtp_send_email
+    action: ask
+    description: "SMTP Email Restrictions"
+    rules:
+      - field: recipient
+        regex: "^.*@(gmail\\.com|outlook\\.com)$"
+        action: ask
+        description: "Always ask for common public providers"
+      - field: recipient
+        regex: "^.*@example\\.com$"
+        action: allow
+        description: "Auto-allow internal example.com emails"
+
 # Whitelist: If defined, ONLY these tools are allowed
 # whitelist:
 #   - calc
@@ -775,6 +793,21 @@ analyze: []
         tool_rules = self._rules.get("tools", [])
         for rule in tool_rules:
             if rule.get("name") == tool_name:
+                # Check argument rules if defined
+                arg_rules = rule.get("rules", [])
+                for arg_rule in arg_rules:
+                    field = arg_rule.get("field")
+                    pattern = arg_rule.get("regex")
+                    if field in args and pattern:
+                        try:
+                            if re.search(pattern, str(args[field])):
+                                action = arg_rule.get("action", rule.get("action", FirewallAction.ALLOW))
+                                reason = arg_rule.get("description", rule.get("description", f"Rule for {tool_name}"))
+                                return action, reason
+                        except Exception as e:
+                            # If regex is invalid, we skip this rule or could block for safety
+                            pass
+
                 action = rule.get("action", FirewallAction.ALLOW)
                 reason = rule.get("description", f"Rule for {tool_name}")
                 return action, reason

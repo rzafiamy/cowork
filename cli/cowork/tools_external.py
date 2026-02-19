@@ -23,6 +23,7 @@ import smtplib
 import time
 import urllib.parse
 import urllib.request
+from dotenv import load_dotenv
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -36,6 +37,10 @@ try:
     GOOGLE_LIBS_AVAILABLE = True
 except ImportError:
     GOOGLE_LIBS_AVAILABLE = False
+
+
+# Load env vars from .env file immediately on import
+load_dotenv()
 
 
 # ─── Key Helpers ──────────────────────────────────────────────────────────────
@@ -1226,7 +1231,11 @@ def smtp_send_email(
     password = _env("SMTP_PASS")
 
     if not all([host, user, password]):
-        return "❌ Missing SMTP configuration (SMTP_HOST, SMTP_USER, SMTP_PASS)."
+        return (
+            "❌ Missing SMTP configuration.\n"
+            "Ensure SMTP_HOST, SMTP_USER, and SMTP_PASS are set in your .env file.\n"
+            "Optional: SMTP_PORT (default 587)."
+        )
 
     try:
         msg = MIMEMultipart()
@@ -1235,14 +1244,22 @@ def smtp_send_email(
         msg["Subject"] = subject
         msg.attach(MIMEText(body, "html" if html else "plain"))
 
-        with smtplib.SMTP(host, port) as server:
-            server.starttls()
-            server.login(user, password)
-            server.send_message(msg)
+        # Use SMTP_SSL for port 465, regular SMTP + starttls for 587/others
+        if port == 465:
+            # Standard SMTPS (Implicit TLS)
+            with smtplib.SMTP_SSL(host, port) as server:
+                server.login(user, password)
+                server.send_message(msg)
+        else:
+            # Standard SMTP + STARTTLS (Port 587 or 25)
+            with smtplib.SMTP(host, port) as server:
+                server.starttls()
+                server.login(user, password)
+                server.send_message(msg)
 
         return f"✅ Email sent successfully to {recipient}."
     except Exception as e:
-        return f"❌ Failed to send email via SMTP: {e}"
+        return f"❌ Failed to send email via SMTP ({host}:{port}): {e}"
 
 
 def telegram_send_message(
@@ -2147,7 +2164,7 @@ KEY_REQUIREMENTS: dict[str, str | None] = {
     "youtube_transcript":   None,               # No key required
     "youtube_metadata":     "YOUTUBE_API_KEY",
     "google_cse_search":    "GOOGLE_API_KEY",
-    "google_search":        None,
+    "google_search":        ["GOOGLE_API_KEY", "SERPAPI_KEY"],
     "brave_search":         "BRAVE_SEARCH_API_KEY",
     "firecrawl_scrape":     "FIRECRAWL_API_KEY",
     "firecrawl_crawl":      "FIRECRAWL_API_KEY",
@@ -2170,7 +2187,7 @@ KEY_REQUIREMENTS: dict[str, str | None] = {
     "google_calendar_create_event":None,
     "google_drive_search":         None,
     "google_drive_upload_text":    None,
-    "gmail_send_email":            None,
+    "gmail_send_email":            "GOOGLE_API_KEY", # Rough proxy to show it needs setup
     # Social
     "linkedin_search":      None,
 }
@@ -2184,8 +2201,20 @@ def get_available_external_tools() -> list[dict]:
     available = []
     for tool in EXTERNAL_TOOLS:
         name = tool["function"]["name"]
-        required_key = KEY_REQUIREMENTS.get(name)
-        if required_key is None or _env(required_key):
+        required = KEY_REQUIREMENTS.get(name)
+        
+        # Check if tool keys are available
+        is_available = False
+        if required is None:
+            is_available = True
+        elif isinstance(required, list):
+            # At least one of the keys must be available
+            is_available = any(_env(k) for k in required)
+        else:
+            # Single key required
+            is_available = bool(_env(required))
+
+        if is_available:
             available.append(tool)
     return available
 

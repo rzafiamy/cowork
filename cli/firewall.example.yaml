@@ -11,10 +11,24 @@ tools:
   - name: gmail_send_email
     action: ask
     description: "Prevent sending unauthorized emails via Gmail"
+    rules:
+      - field: recipient
+        regex: "^.*@trusted-partner\\.com$"
+        action: allow
+        description: "Auto-allow trusted partners"
   
   - name: smtp_send_email
     action: ask
     description: "Prevent sending unauthorized emails via SMTP"
+    rules:
+      - field: recipient
+        regex: "^.*@(gmail\\.com|outlook\\.com)$"
+        action: ask
+        description: "Always ask for common public providers"
+      - field: recipient
+        regex: "^.*@internal\\.company\\.com$"
+        action: allow
+        description: "Auto-allow internal communications"
 
   - name: google_calendar_create_event
     action: ask

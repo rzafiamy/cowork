@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .config import CONFIG_DIR
+from .prompts import CONTEXT_FUSION_TEMPLATE, SESSION_SUMMARY_PROMPT, TRIPLET_EXTRACTION_PROMPT
 from .theme import OP_DEFAULTS
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
@@ -33,38 +34,8 @@ MEMORIA_DB = MEMORIA_DIR / "memoria.db"
 # ─── Embedding dimension for all-MiniLM-L6-v2 ────────────────────────────────
 EMBED_DIM = 384
 
-# ─── Prompts ──────────────────────────────────────────────────────────────────
-
-TRIPLET_EXTRACTION_PROMPT = """Extract factual knowledge triplets from the following user message.
-Return ONLY a JSON object with a key 'triplets' containing an array of triplets. Each triplet must have: subject, predicate, object.
-Focus on facts about the user, their preferences, goals, and context.
-If there are no extractable facts, return {{"triplets": []}}.
-
-Message: {message}
-
-Return format: {{"triplets": [{{"subject": "...", "predicate": "...", "object": "..."}}]}}"""
-
-SESSION_SUMMARY_PROMPT = """Update the session summary with the latest interaction.
-
-Current Summary:
-{current_summary}
-
-New Interaction:
-User: {user_message}
-Assistant: {assistant_response}
-
-Provide an updated, concise summary (under 200 words) capturing:
-1. Main topics discussed
-2. Key decisions or preferences expressed
-3. Ongoing context and goals
-
-Return ONLY the updated summary text."""
-
-CONTEXT_FUSION_TEMPLATE = """📝 SESSION CONTEXT:
-{summary}
-
-🧩 PERSONA KNOWLEDGE:
-{triplets}"""
+# ─── Prompts are centralized in prompts.py ───────────────────────────────────
+# Import: TRIPLET_EXTRACTION_PROMPT, SESSION_SUMMARY_PROMPT, CONTEXT_FUSION_TEMPLATE
 
 
 # ─── Local Embedder ───────────────────────────────────────────────────────────
