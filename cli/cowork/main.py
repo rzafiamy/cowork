@@ -381,8 +381,32 @@ async def handle_command(
         render_session_list(updated)
 
     elif command == "/jobs":
-        jobs = _job_manager.list_recent(20)
-        render_job_dashboard(jobs)
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        if sub == "clean":
+            if click.confirm("Wipe all job history?", default=False):
+                _job_manager.clear_all()
+                render_success("🧹 Job history cleared.")
+        elif sub == "resume":
+            if len(parts) < 3:
+                render_error("Usage: /jobs resume <job_id>")
+            else:
+                job_id = parts[2]
+                job = _job_manager.get_job(job_id)
+                if job:
+                    render_success(f"🚀 Resuming job {job.job_id}: [dim_text]{job.prompt}[/dim_text]")
+                    # Recursive call to run_agent_turn
+                    await run_agent_turn(
+                        user_input=job.prompt,
+                        session=session,
+                        api_client=api_client,
+                        scratchpad=scratchpad,
+                        memoria=memoria,
+                    )
+                else:
+                    render_error(f"Job '{job_id}' not found.")
+        else:
+            jobs = _job_manager.list_recent(20)
+            render_job_dashboard(jobs)
 
     elif command == "/config":
         if len(parts) >= 3 and parts[1] == "set":
@@ -953,10 +977,17 @@ def memory() -> None:
 
 
 @cli.command()
-def jobs() -> None:
-    """Show the Sentinel job queue dashboard."""
+@click.argument("action", required=False)
+def jobs(action: Optional[str] = None) -> None:
+    """Manage the Sentinel job queue (e.g. 'jobs clean')."""
+    if action == "clean":
+        if click.confirm("Wipe all job history?", default=False):
+            _job_manager.clear_all()
+            render_success("🧹 Job history cleared.")
+        return
+
     print_banner()
-    recent = _job_manager.list_recent(20)
+    recent = _job_manager.list_recent(24)
     render_job_dashboard(recent)
 
 

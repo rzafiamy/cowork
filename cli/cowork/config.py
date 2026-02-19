@@ -62,6 +62,25 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "theme":                      "dark",
 }
 
+SENSITIVE_KEYS = {
+    "api_key",
+    "YOUTUBE_API_KEY",
+    "GOOGLE_API_KEY",
+    "GOOGLE_SEARCH_ENGINE_ID",
+    "SERPAPI_KEY",
+    "BRAVE_SEARCH_API_KEY",
+    "FIRECRAWL_API_KEY",
+    "NEWSAPI_KEY",
+    "GITHUB_TOKEN",
+    "OPENWEATHER_API_KEY",
+    "TMDB_API_KEY",
+    "TWITTER_BEARER_TOKEN",
+    "SMTP_HOST",
+    "SMTP_PORT",
+    "SMTP_USER",
+    "SMTP_PASS",
+}
+
 # ─── Config Manager ───────────────────────────────────────────────────────────
 class ConfigManager:
     """Manages persistent configuration stored in ~/.cowork/config.json."""
@@ -76,44 +95,41 @@ class ConfigManager:
             try:
                 with open(CONFIG_FILE) as f:
                     self._data = json.load(f)
+                
+                # 🛡️ CLEANUP: Immediately purge any sensitive keys that might have leaked into config.json
+                for k in SENSITIVE_KEYS:
+                    if k in self._data:
+                        del self._data[k]
+                        
             except (json.JSONDecodeError, OSError):
                 self._data = {}
+
         # Merge defaults (don't overwrite existing)
         for k, v in DEFAULT_CONFIG.items():
             self._data.setdefault(k, v)
-        # Override from environment
+
+        # Override from environment (Prioritize .env)
         if os.getenv("OPENAI_API_KEY"):
             self._data["api_key"] = os.getenv("OPENAI_API_KEY", "")
         if os.getenv("COWORK_API_ENDPOINT"):
             self._data["api_endpoint"] = os.getenv("COWORK_API_ENDPOINT", "")
         if os.getenv("COWORK_MODEL"):
             self._data["model_text"] = os.getenv("COWORK_MODEL", "")
-        # ── External Tool API Keys (loaded from .env, stored in memory only) ──
-        _ext_keys = [
-            "YOUTUBE_API_KEY",
-            "GOOGLE_API_KEY",
-            "GOOGLE_SEARCH_ENGINE_ID",
-            "SERPAPI_KEY",
-            "BRAVE_SEARCH_API_KEY",
-            "FIRECRAWL_API_KEY",
-            "NEWSAPI_KEY",
-            "GITHUB_TOKEN",
-            "OPENWEATHER_API_KEY",
-            "TMDB_API_KEY",
-            "TWITTER_BEARER_TOKEN",
-            "SMTP_HOST",
-            "SMTP_PORT",
-            "SMTP_USER",
-            "SMTP_PASS",
-        ]
-        for _k in _ext_keys:
+
+        # ── External Tool API Keys (loaded from .env, kept in memory only) ──
+        for _k in SENSITIVE_KEYS:
+            if _k == "api_key": continue # Already handled or specifically mapped
             val = os.getenv(_k)
             if val:
                 self._data[_k] = val
 
     def save(self) -> None:
+        """Saves configuration to disk, filtering out sensitive credentials."""
+        # 🛡️ Filter sensitive keys before writing to file
+        safe_data = {k: v for k, v in self._data.items() if k not in SENSITIVE_KEYS}
+        
         with open(CONFIG_FILE, "w") as f:
-            json.dump(self._data, f, indent=2)
+            json.dump(safe_data, f, indent=2)
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._data.get(key, default)
@@ -447,6 +463,19 @@ class JobManager:
         for j in to_remove:
             del self._jobs[j.job_id]
         self._save()
+
+    def clear_all(self) -> None:
+        """Wipe all jobs from history."""
+        self._jobs = {}
+        self._save()
+
+    def get_job(self, job_id: str) -> Optional[AgentJob]:
+        """Retrieve a job by its full or partial ID."""
+        if job_id in self._jobs:
+            return self._jobs[job_id]
+        # Partial match
+        matches = [j for j in self._jobs.values() if j.job_id.startswith(job_id)]
+        return matches[0] if len(matches) == 1 else None
 
 
 # ─── Token Tracker ────────────────────────────────────────────────────────────

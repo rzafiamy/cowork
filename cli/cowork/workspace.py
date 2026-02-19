@@ -31,21 +31,11 @@ from typing import Any, Optional
 
 def _find_workspace_root() -> Path:
     """
-    Walk up from this file's location to find the workspace/ directory.
-    Falls back to ~/.cowork/workspace if not found.
+    Returns ~/.cowork/workspace as the primary workspace root.
     """
-    # This file lives at: <project>/cli/cowork/workspace.py
-    # The workspace folder is at: <project>/cli/workspace/
-    here = Path(__file__).resolve().parent  # cli/cowork/
-    candidate = here.parent / "workspace"   # cli/workspace/
-    if candidate.exists() or not candidate.parent.exists():
-        candidate.mkdir(parents=True, exist_ok=True)
-        return candidate
-
-    # Fallback: ~/.cowork/workspace
-    fallback = Path.home() / ".cowork" / "workspace"
-    fallback.mkdir(parents=True, exist_ok=True)
-    return fallback
+    root = Path.home() / ".cowork" / "workspace"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 WORKSPACE_ROOT: Path = _find_workspace_root()
