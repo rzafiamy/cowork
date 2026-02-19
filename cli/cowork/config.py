@@ -148,7 +148,7 @@ class Session:
     def __init__(self, session_id: Optional[str] = None, title: str = "Untitled Session") -> None:
         self.session_id = session_id or str(uuid.uuid4())
         self.title = title
-        self.created_at = datetime.utcnow().isoformat()
+        self.created_at = datetime.now().isoformat()
         self.updated_at = self.created_at
         self.messages: list[dict] = []
         self.summary: str = ""
@@ -159,10 +159,10 @@ class Session:
         self.messages.append({
             "role": role,
             "content": content,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now().isoformat(),
             "metadata": metadata or {},
         })
-        self.updated_at = datetime.utcnow().isoformat()
+        self.updated_at = datetime.now().isoformat()
 
     def to_dict(self) -> dict:
         return {
@@ -259,7 +259,7 @@ class Scratchpad:
             "key": key,
             "description": description,
             "size_chars": len(content),
-            "saved_at": datetime.utcnow().isoformat(),
+            "saved_at": datetime.now().isoformat(),
             "path": str(path),
         }
         self._save_index()
@@ -340,7 +340,7 @@ class AgentJob:
         self.session_id = session_id
         self.prompt = prompt
         self.status = JobStatus.PENDING
-        self.created_at = datetime.utcnow().isoformat()
+        self.created_at = datetime.now().isoformat()
         self.started_at: Optional[str] = None
         self.completed_at: Optional[str] = None
         self.result: Optional[str] = None
@@ -405,7 +405,7 @@ class JobManager:
     def start(self, job_id: str) -> None:
         if job_id in self._jobs:
             self._jobs[job_id].status = JobStatus.RUNNING
-            self._jobs[job_id].started_at = datetime.utcnow().isoformat()
+            self._jobs[job_id].started_at = datetime.now().isoformat()
             self._save()
 
     def complete(self, job_id: str, result: str) -> None:
@@ -413,7 +413,7 @@ class JobManager:
             j = self._jobs[job_id]
             j.status = JobStatus.COMPLETED
             j.result = result
-            j.completed_at = datetime.utcnow().isoformat()
+            j.completed_at = datetime.now().isoformat()
             self._save()
 
     def fail(self, job_id: str, error: str) -> None:
@@ -421,7 +421,7 @@ class JobManager:
             j = self._jobs[job_id]
             j.status = JobStatus.FAILED
             j.error = error
-            j.completed_at = datetime.utcnow().isoformat()
+            j.completed_at = datetime.now().isoformat()
             self._save()
 
     def get_ghost_jobs(self) -> list[AgentJob]:
@@ -486,15 +486,15 @@ class TokenTracker:
                 "completion_tokens": 0,
                 "total_tokens": 0,
                 "request_count": 0,
-                "first_seen": datetime.utcnow().isoformat(),
-                "last_seen": datetime.utcnow().isoformat(),
+                "first_seen": datetime.now().isoformat(),
+                "last_seen": datetime.now().isoformat(),
             }
         entry = self._data[key]
         entry["prompt_tokens"]     += usage.get("prompt_tokens", 0)
         entry["completion_tokens"] += usage.get("completion_tokens", 0)
         entry["total_tokens"]      += usage.get("total_tokens", 0)
         entry["request_count"]     += 1
-        entry["last_seen"]          = datetime.utcnow().isoformat()
+        entry["last_seen"]          = datetime.now().isoformat()
         self._save()
 
     def get_all(self) -> list[dict]:
@@ -533,7 +533,7 @@ class AIProfile:
         self.model = model
         self.api_key = api_key
         self.description = description
-        self.created_at = datetime.utcnow().isoformat()
+        self.created_at = datetime.now().isoformat()
 
     def to_dict(self) -> dict:
         return {

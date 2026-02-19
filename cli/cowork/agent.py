@@ -309,7 +309,7 @@ class GeneralPurposeAgent:
 
         # ── Build System Prompt ───────────────────────────────────────────────
         system_prompt = AGENT_SYSTEM_PROMPT.format(
-            current_datetime=dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+            current_datetime=dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %z"),
             memory_context=memory_context or "(No memory context yet)",
             session_id=session.session_id[:8],
             message_count=len(session.messages),

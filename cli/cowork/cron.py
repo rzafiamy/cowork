@@ -36,7 +36,7 @@ class CronJob:
         self.schedule_value = schedule_value
         self.session_id = session_id
         self.status = CronStatus.ENABLED
-        self.created_at = datetime.utcnow().isoformat()
+        self.created_at = datetime.now().isoformat()
         self.last_run: Optional[str] = None
         self.next_run: Optional[str] = None
         self.run_count: int = 0

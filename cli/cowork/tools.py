@@ -567,12 +567,31 @@ class ToolExecutor:
         except Exception as ex:
             return f"Calculation error: {ex}"
 
-    def _tool_get_time(self, timezone: str = "UTC") -> str:
+    def _tool_get_time(self, timezone: Optional[str] = None) -> str:
         self._emit("⏰ Fetching current time...")
-        now = datetime.datetime.utcnow()
+        from datetime import datetime
+        try:
+            from zoneinfo import ZoneInfo
+        except ImportError:
+            ZoneInfo = None
+
+        now = datetime.now().astimezone()
+        
+        if timezone and timezone.upper() != "LOCAL":
+            if timezone.upper() == "UTC":
+                from datetime import timezone as dt_timezone
+                now = datetime.now(dt_timezone.utc)
+            elif ZoneInfo:
+                try:
+                    now = datetime.now(ZoneInfo(timezone))
+                except Exception:
+                    return f"❌ Error: Invalid or unknown timezone '{timezone}'."
+            else:
+                return f"❌ Error: Timezone support requires Python 3.9+ or zoneinfo backport."
+
         return (
-            f"Current UTC time: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
-            f"ISO 8601: {now.isoformat()}Z\n"
+            f"Current time ({timezone or 'Local'}): {now.strftime('%Y-%m-%d %H:%M:%S %z')}\n"
+            f"ISO 8601: {now.isoformat()}\n"
             f"Unix timestamp: {int(now.timestamp())}"
         )
 
