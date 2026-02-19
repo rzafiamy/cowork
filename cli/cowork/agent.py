@@ -202,7 +202,7 @@ class GeneralPurposeAgent:
         self.stream_cb = stream_callback or (lambda token: None)
         self.confirm_cb = confirmation_callback
 
-        self.router = MetaRouter(api_client)
+        self.router = MetaRouter(api_client, config.get("model_router", "gpt-4o-mini"))
         self.compressor = ContextCompressor(api_client, config)
         self.gateway = ExecutionGateway(scratchpad)
         self.executor = ToolExecutor(scratchpad, config, status_callback=self.status_cb)

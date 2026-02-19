@@ -141,15 +141,22 @@ class StreamingRenderer:
     def _render(self) -> Panel:
         elapsed = time.time() - self._start_time
         content = self._buffer or " "
+        # Pre-process content for better markdown table rendering
+        # Ensure tables have an empty line before them if missing
+        import re
+        content_fixed = re.sub(r"([^\n])\n\|", r"\1\n\n|", content)
+        
         try:
-            md = Markdown(content)
+            md = Markdown(content_fixed)
         except Exception:
             md = Text(content)
+
         return Panel(
             md,
             title=f"[secondary]🤖 Cowork[/secondary]  [dim_text]{elapsed:.1f}s[/dim_text]",
             border_style="secondary",
             padding=(1, 2),
+            expand=True,
         )
 
     def stop(self) -> str:
@@ -235,8 +242,12 @@ def render_response(content: str, elapsed: float, tool_calls: int = 0, step_coun
         stats_parts.append(f"🔄 {step_count} step{'s' if step_count != 1 else ''}")
     stats = "  [dim_text]" + "  ·  ".join(stats_parts) + "[/dim_text]"
 
+    # Pre-process content for better markdown table rendering
+    import re
+    content_fixed = re.sub(r"([^\n])\n\|", r"\1\n\n|", content)
+
     try:
-        body = Markdown(content)
+        body = Markdown(content_fixed)
     except Exception:
         body = Text(content)
 
@@ -246,6 +257,7 @@ def render_response(content: str, elapsed: float, tool_calls: int = 0, step_coun
         title="[secondary]🤖 Cowork[/secondary]",
         border_style="secondary",
         padding=(1, 2),
+        expand=True,
     ))
     console.print()
 

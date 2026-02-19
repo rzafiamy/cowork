@@ -5,7 +5,7 @@ Implements the Brain phase — dynamic tool schema loading via intent classifica
 
 import json
 import re
-from typing import Any
+from typing import Any, Optional
 
 from .prompts import ROUTER_CATEGORY_DESCRIPTIONS, ROUTER_SYSTEM_TEMPLATE, ROUTER_USER_TEMPLATE
 from .theme import CATEGORY_STYLES, OP_DEFAULTS
@@ -34,8 +34,9 @@ class MetaRouter:
     Runs at Temperature 0.0 for maximum determinism.
     """
 
-    def __init__(self, api_client: Any) -> None:
+    def __init__(self, api_client: Any, model: str = "gpt-4o-mini") -> None:
         self.api_client = api_client
+        self.model = model
 
     async def classify(self, prompt: str) -> dict:
         """
@@ -63,35 +64,78 @@ class MetaRouter:
             {"role": "user", "content": ROUTER_USER_TEMPLATE.format(prompt=prompt)},
         ]
 
+        first_error: Optional[Exception] = None
+        result = None
+
+        # Attempt 1: With JSON mode (best for OpenAI-compatible endpoints)
         try:
             result = await self.api_client.chat(
                 messages=messages,
+                model=self.model,
                 temperature=OP_DEFAULTS["temperature_router"],
                 response_format={"type": "json_object"},
                 max_tokens=200,
             )
+        except Exception as e1:
+            first_error = e1
+
+        # Attempt 2: Without JSON mode (fallback for local models / proxies that
+        # don't support response_format, e.g. Gemini OpenAI-compat layer)
+        if result is None:
+            try:
+                result = await self.api_client.chat(
+                    messages=messages,
+                    model=self.model,
+                    temperature=OP_DEFAULTS["temperature_router"],
+                    max_tokens=200,
+                )
+            except Exception as e2:
+                # Both attempts failed — fall back to keyword routing
+                err = first_error or e2
+                err_msg = str(err)
+                if "not_found_error" in err_msg.lower() or "404" in err_msg:
+                    hint = f"Model '{self.model}' not found — check model_router in config."
+                elif "401" in err_msg or "unauthorized" in err_msg.lower() or "invalid_api_key" in err_msg.lower():
+                    hint = "Invalid API key — check api_key in config."
+                elif "403" in err_msg or "forbidden" in err_msg.lower():
+                    hint = "API key not authorized for this endpoint."
+                else:
+                    hint = err_msg[:80] + "..." if len(err_msg) > 80 else err_msg
+
+                res = self._keyword_fallback(prompt)
+                res["reasoning"] = f"Keyword-based fallback (LLM routing failed: {hint})"
+                return res
+
+        try:
             content = result.get("content", "{}")
+
+            # Extract JSON if not clean (sometimes models ignore the Respond ONLY instruction)
+            if "{" in content:
+                content = content[content.find("{"):content.rfind("}")+1]
+
             parsed = json.loads(content)
             categories = parsed.get("categories", ["ALL_TOOLS"])
             # Validate categories
             valid = [c for c in categories if c in domains]
             if not valid:
                 valid = ["ALL_TOOLS"]
-            
+
             # Heuristic: Inject SEARCH_TOOLS for specific data domains to ensure fallback
             # (In case the specific tool's API key is missing)
             if any(c in valid for c in ["NEWS_TOOLS", "WEATHER_TOOLS", "WEB_TOOLS"]):
                 if "SEARCH_TOOLS" not in valid:
                     valid.append("SEARCH_TOOLS")
-            
+
             return {
                 "categories": valid,
                 "confidence": parsed.get("confidence", 0.5),
                 "reasoning": parsed.get("reasoning", ""),
             }
-        except Exception:
-            # Fallback: simple keyword-based routing
-            return self._keyword_fallback(prompt)
+        except Exception as e:
+            # JSON parse failed — fall back to keyword routing
+            res = self._keyword_fallback(prompt)
+            res["reasoning"] = f"Keyword-based fallback (JSON parse error: {e})"
+            return res
 
     def _keyword_fallback(self, prompt: str) -> dict:
         """Keyword-based fallback when LLM routing fails."""

@@ -40,7 +40,7 @@ class APIClient:
         max_retries: int = 5,
         retry_base_delay: float = 2.0,
     ) -> None:
-        self.endpoint = endpoint.rstrip("/")
+        self.endpoint = endpoint.rstrip("/") + "/"
         self.api_key = api_key
         self.timeout = timeout
         self.token_callback = token_callback
@@ -116,7 +116,7 @@ class APIClient:
         for attempt in range(self.max_retries):
             try:
                 client = self._get_client()
-                resp = await client.post("/chat/completions", json=payload)
+                resp = await client.post(f"{self.endpoint}chat/completions", json=payload)
                 if resp.status_code == 429:
                     # Rate limit — back off with jitter
                     import random
@@ -203,7 +203,7 @@ class APIClient:
         finish_reason = "stop"
 
         client = self._get_client()
-        async with client.stream("POST", "/chat/completions", json=payload) as resp:
+        async with client.stream("POST", "chat/completions", json=payload) as resp:
             if resp.status_code >= 400:
                 body = await resp.aread()
                 raise APIError(f"Stream error {resp.status_code}: {body.decode()}", resp.status_code)
