@@ -60,6 +60,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "stream":                     True,
     "show_trace":                 False,
     "theme":                      "dark",
+    # ── Multi-Modal Services ──────────────────────────────────────────────────
+    # Vision / Image analysis
+    "mm_vision_endpoint":         "",
+    "mm_vision_model":            "",
+    # Image generation
+    "mm_image_endpoint":          "",
+    "mm_image_model":             "",
+    # Speech-to-Text (ASR / Whisper)
+    "mm_asr_endpoint":            "",
+    "mm_asr_model":               "",
+    # Text-to-Speech (TTS)
+    "mm_tts_endpoint":            "",
+    "mm_tts_model":               "",
 }
 
 SENSITIVE_KEYS = {
@@ -79,6 +92,11 @@ SENSITIVE_KEYS = {
     "SMTP_PORT",
     "SMTP_USER",
     "SMTP_PASS",
+    # Multi-Modal service tokens
+    "mm_vision_token",
+    "mm_image_token",
+    "mm_asr_token",
+    "mm_tts_token",
 }
 
 # ─── Config Manager ───────────────────────────────────────────────────────────
@@ -116,10 +134,18 @@ class ConfigManager:
         if os.getenv("COWORK_MODEL"):
             self._data["model_text"] = os.getenv("COWORK_MODEL", "")
 
+        # ── Multi-Modal (MM) service overrides from environment ──
+        for k in self._data:
+            if k.startswith("mm_"):
+                # Check both lowercase (config name) and uppercase (env convention)
+                val = os.getenv(k) or os.getenv(k.upper())
+                if val:
+                    self._data[k] = val
+
         # ── External Tool API Keys (loaded from .env, kept in memory only) ──
         for _k in SENSITIVE_KEYS:
             if _k == "api_key": continue # Already handled or specifically mapped
-            val = os.getenv(_k)
+            val = os.getenv(_k) or os.getenv(_k.upper())
             if val:
                 self._data[_k] = val
 

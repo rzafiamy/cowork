@@ -149,6 +149,7 @@ ROUTER_CATEGORY_DESCRIPTIONS = {
     "GOOGLE_TOOLS": "Google Calendar, Drive, Gmail",
     "SOCIAL_TOOLS": "LinkedIn profile/post search",
     "VISION": "Image analysis, OCR",
+    "MULTIMODAL_TOOLS": "Vision/image analysis, image generation (DALL-E style), speech-to-text (ASR/Whisper), text-to-speech (TTS)",
     "DATA_AND_UTILITY": "Math, charts, diagrams, time/date",
     "DOCUMENT_TOOLS": "Create PDF, PowerPoint (PPTX), Excel (XLSX), or Word (DOCX) documents",
     "SESSION_SCRATCHPAD": "Store or retrieve large data within this session",

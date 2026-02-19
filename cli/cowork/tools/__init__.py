@@ -40,6 +40,12 @@ from .builtin.document import (
     DocumentCreateXlsxTool,
     DocumentCreateDocxTool,
 )
+from .builtin.multimodal import (
+    VisionAnalyzeTool,
+    ImageGenerateTool,
+    SpeechToTextTool,
+    TextToSpeechTool,
+)
 
 # Register builtin tools
 def _register_builtin():
@@ -69,6 +75,10 @@ def _register_builtin():
     registry.register(DocumentCreatePptxTool)
     registry.register(DocumentCreateXlsxTool)
     registry.register(DocumentCreateDocxTool)
+    registry.register(VisionAnalyzeTool)
+    registry.register(ImageGenerateTool)
+    registry.register(SpeechToTextTool)
+    registry.register(TextToSpeechTool)
 
 def _register_external():
     from .external.adapter import ExternalToolAdapter

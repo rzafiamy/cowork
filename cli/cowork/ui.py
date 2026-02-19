@@ -796,6 +796,8 @@ def render_help() -> None:
         ("/ai switch <name>",               "Switch to a saved AI profile"),
         ("/ai remove <name>",               "Remove a saved AI profile"),
         ("/ai save <name>",                 "Save current config as a profile"),
+        ("/mm",                             "Show multi-modal service status"),
+        ("/mm <service> <field> <value>",   "Configure vision/image/ASR/TTS services"),
         ("/model",                          "List available AI models on current endpoint"),
         ("/model <name>",                   "Switch to a specific AI model"),
         ("/workspace open",          "Open workspace folder path in terminal"),

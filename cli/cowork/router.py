@@ -166,6 +166,18 @@ class MetaRouter:
         if any(w in p for w in ["linkedin", "professional profile"]):
             categories.append("SOCIAL_TOOLS")
 
+        # Multi-modal intent keywords
+        if any(w in p for w in [
+            "generate image", "image generation", "create image", "dall-e", "dalle",
+            "stable diffusion", "text to image", "make a picture", "draw",
+            "transcribe", "speech to text", "stt", "asr", "whisper", "audio transcription",
+            "convert audio", "audio to text",
+            "text to speech", "tts", "synthesize speech", "read aloud", "speak",
+            "vision", "describe image", "analyze image", "ocr", "image analysis",
+            "look at this image", "what is in this", "what does this image",
+        ]):
+            categories.append("MULTIMODAL_TOOLS")
+
         # Built-in tool keywords
         if not categories:
             if any(w in p for w in ["search", "find", "look up", "what is", "who is", "when did", "weather"]):

@@ -698,6 +698,65 @@ async def handle_command(
                 models = await api_client.list_models()
             render_model_list(models, _config.model_text)
 
+    elif command == "/mm":
+        # /mm [status|vision|images|asr|tts] [endpoint <url>|token <key>|model <name>]
+        # Re-split to get up to 4 tokens: /mm <service> <field> <value>
+        mm_parts = cmd.strip().split(maxsplit=3)
+        sub = mm_parts[1].lower() if len(mm_parts) > 1 else "status"
+        MM_SERVICES = {
+            "vision": ("mm_vision_endpoint", "mm_vision_token", "mm_vision_model", "👁️  Vision (Image Analysis)"),
+            "images": ("mm_image_endpoint",  "mm_image_token",  "mm_image_model",  "🎨 Image Generation"),
+            "asr":    ("mm_asr_endpoint",    "mm_asr_token",    "mm_asr_model",    "🎤 Speech-to-Text (ASR)"),
+            "tts":    ("mm_tts_endpoint",    "mm_tts_token",    "mm_tts_model",    "🔊 Text-to-Speech (TTS)"),
+        }
+        if sub == "status" or sub not in MM_SERVICES:
+            from rich.table import Table
+            from rich import box
+            table = Table(title="🎨 Multi-Modal Services", box=box.ROUNDED, border_style="primary")
+            table.add_column("Service", style="highlight", min_width=28)
+            table.add_column("Endpoint", style="text")
+            table.add_column("Model", style="muted")
+            table.add_column("Token", style="success", justify="center")
+            for svc_key, (ep_key, tok_key, mdl_key, label) in MM_SERVICES.items():
+                ep  = _config.get(ep_key, "") or ""
+                tok = _config.get(tok_key, "") or ""
+                mdl = _config.get(mdl_key, "") or ""
+                table.add_row(
+                    label,
+                    ep[:50] if ep else "[muted]—[/muted]",
+                    mdl if mdl else "[muted]—[/muted]",
+                    "✅" if (ep and tok) else "❌",
+                )
+            console.print(table)
+            console.print()
+            console.print("[dim_text]  Usage:[/dim_text]")
+            console.print("[dim_text]  /mm vision endpoint <url>   — set vision endpoint[/dim_text]")
+            console.print("[dim_text]  /mm vision token <key>      — set vision API key[/dim_text]")
+            console.print("[dim_text]  /mm vision model <name>     — set vision model[/dim_text]")
+            console.print("[dim_text]  /mm images|asr|tts ...      — same for other services[/dim_text]")
+        elif sub in MM_SERVICES:
+            ep_key, tok_key, mdl_key, label = MM_SERVICES[sub]
+            if len(mm_parts) < 4:
+                render_error(
+                    f"Usage: /mm {sub} <endpoint|token|model> <value>",
+                    hint=f"Example: /mm {sub} endpoint https://api.openai.com/v1",
+                )
+            else:
+                field = mm_parts[2].lower()
+                value = mm_parts[3].strip() if len(mm_parts) > 3 else ""
+                if field == "endpoint":
+                    _config.set(ep_key, value.rstrip("/"))
+                    render_success(f"✅ {label} endpoint set to: {value}")
+                elif field in ("token", "key"):
+                    # Sensitive — kept in memory only (not written to config.json)
+                    _config.set(tok_key, value)
+                    render_success(f"✅ {label} token updated. (stored in memory, not persisted to disk)")
+                elif field == "model":
+                    _config.set(mdl_key, value)
+                    render_success(f"✅ {label} model set to: {value}")
+                else:
+                    render_error(f"Unknown field '{field}'. Use: endpoint, token, model.")
+
     else:
         render_warning(f"Unknown command: {command}. Type /help for available commands.")
 
@@ -1082,6 +1141,72 @@ def ai(action: str, args: tuple) -> None:
         name = args[0] if args else "default"
         _ai_profiles.snapshot_current(_config, name)
         render_success(f"💾 Saved current config as profile '{name}'.")
+
+
+@cli.group()
+def mm() -> None:
+    """Manage multi-modal service endpoints (vision, images, ASR, TTS)."""
+    pass
+
+
+@mm.command(name="status")
+def mm_status() -> None:
+    """Show current multi-modal service configuration."""
+    print_banner()
+    from rich.table import Table
+    from rich import box
+    MM_SERVICES = {
+        "vision": ("mm_vision_endpoint", "mm_vision_token", "mm_vision_model", "👁️  Vision (Image Analysis)"),
+        "images": ("mm_image_endpoint",  "mm_image_token",  "mm_image_model",  "🎨 Image Generation"),
+        "asr":    ("mm_asr_endpoint",    "mm_asr_token",    "mm_asr_model",    "🎤 Speech-to-Text (ASR)"),
+        "tts":    ("mm_tts_endpoint",    "mm_tts_token",    "mm_tts_model",    "🔊 Text-to-Speech (TTS)"),
+    }
+    table = Table(title="🎨 Multi-Modal Services", box=box.ROUNDED, border_style="primary")
+    table.add_column("Service", style="highlight", min_width=28)
+    table.add_column("Endpoint", style="text")
+    table.add_column("Model", style="muted")
+    table.add_column("Token", style="success", justify="center")
+    for svc_key, (ep_key, tok_key, mdl_key, label) in MM_SERVICES.items():
+        ep  = _config.get(ep_key, "") or ""
+        tok = _config.get(tok_key, "") or ""
+        mdl = _config.get(mdl_key, "") or ""
+        table.add_row(
+            label,
+            ep[:55] if ep else "[muted]—[/muted]",
+            mdl if mdl else "[muted]—[/muted]",
+            "✅" if (ep and tok) else "❌",
+        )
+    console.print(table)
+
+
+@mm.command(name="set")
+@click.argument("service", type=click.Choice(["vision", "images", "asr", "tts"]))
+@click.argument("field", type=click.Choice(["endpoint", "token", "model"]))
+@click.argument("value")
+def mm_set(service: str, field: str, value: str) -> None:
+    """Set a multi-modal service property (endpoint/token/model).
+
+    Examples:
+      cowork mm set vision endpoint https://api.openai.com/v1
+      cowork mm set vision token sk-...
+      cowork mm set images model dall-e-3
+    """
+    MM_KEYS = {
+        "vision": ("mm_vision_endpoint", "mm_vision_token", "mm_vision_model", "👁️  Vision"),
+        "images": ("mm_image_endpoint",  "mm_image_token",  "mm_image_model",  "🎨 Image Generation"),
+        "asr":    ("mm_asr_endpoint",    "mm_asr_token",    "mm_asr_model",    "🎤 ASR"),
+        "tts":    ("mm_tts_endpoint",    "mm_tts_token",    "mm_tts_model",    "🔊 TTS"),
+    }
+    ep_key, tok_key, mdl_key, label = MM_KEYS[service]
+    if field == "endpoint":
+        _config.set(ep_key, value.rstrip("/"))
+        render_success(f"✅ {label} endpoint set to: {value}")
+    elif field == "token":
+        _config.set(tok_key, value)
+        render_success(f"✅ {label} token updated. (stored in memory, not persisted to disk)")
+    elif field == "model":
+        _config.set(mdl_key, value)
+        render_success(f"✅ {label} model set to: {value}")
 
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────

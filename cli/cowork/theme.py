@@ -111,6 +111,8 @@ CATEGORY_STYLES = {
     "COMMUNICATION_TOOLS":    ("[success]📧 COMMUNICATION_TOOLS[/success]",     "#10B981"),
     "GOOGLE_TOOLS":           ("[gateway]☁️  GOOGLE_TOOLS[/gateway]",          "#FBBF24"),
     "SOCIAL_TOOLS":           ("[highlight]🤝 SOCIAL_TOOLS[/highlight]",        "#818CF8"),
+    "DOCUMENT_TOOLS":         ("[compress]📄 DOCUMENT_TOOLS[/compress]",        "#A78BFA"),
+    "MULTIMODAL_TOOLS":       ("[primary]🎨 MULTIMODAL_TOOLS[/primary]",        "#7C3AED"),
 }
 
 # ─── Error Prefixes ───────────────────────────────────────────────────────────
