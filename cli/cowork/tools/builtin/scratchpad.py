@@ -134,3 +134,86 @@ class ScratchpadSearchTool(BaseTool):
         for r in results:
             lines.append(f"• ref:{r['key']} — {r['description']}\n  Preview: {r['preview'][:100]}...")
         return "\n".join(lines)
+
+
+class ScratchpadUpdateGoalTool(BaseTool):
+    """
+    Dedicated tool for maintaining a structured task goal anchor.
+    Saves/updates the canonical `task_goal` scratchpad entry, which the AI
+    reads at the start of every follow-up turn to avoid losing context.
+    """
+
+    @property
+    def name(self) -> str:
+        return "scratchpad_update_goal"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Save or update the structured task goal anchor (key=task_goal). "
+            "Use this at the START of any multi-step task and AFTER each refinement turn "
+            "to track the current state, remaining steps, and user preferences. "
+            "The AI reads this at the beginning of every follow-up to stay oriented."
+        )
+
+    @property
+    def category(self) -> str:
+        return "SESSION_SCRATCHPAD"
+
+    @property
+    def parameters(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "goal": {
+                    "type": "string",
+                    "description": "One-line description of the user's final objective",
+                },
+                "scope": {
+                    "type": "string",
+                    "description": "Key constraints — e.g. '10 slides, business audience, dark theme'",
+                },
+                "current_state": {
+                    "type": "string",
+                    "description": "What has been produced so far — e.g. 'slides 1-10 created, slide 3 needs more detail'",
+                },
+                "next_steps": {
+                    "type": "string",
+                    "description": "What still needs to be done to fulfil the goal",
+                },
+                "user_preferences": {
+                    "type": "string",
+                    "description": "Style, tone, format, or other preferences stated by the user",
+                },
+            },
+            "required": ["goal", "current_state", "next_steps"],
+        }
+
+    def execute(
+        self,
+        goal: str,
+        current_state: str,
+        next_steps: str,
+        scope: str = "",
+        user_preferences: str = "",
+    ) -> str:
+        self._emit("🎯 Updating task goal anchor...")
+        if not self.scratchpad:
+            return "❌ Error: Scratchpad not initialized."
+
+        content = (
+            f"GOAL: {goal}\n"
+            f"SCOPE: {scope or 'not specified'}\n"
+            f"CURRENT_STATE: {current_state}\n"
+            f"NEXT_STEPS: {next_steps}\n"
+            f"USER_PREFERENCES: {user_preferences or 'none specified'}"
+        )
+        ref = self.scratchpad.save(
+            key="task_goal",
+            content=content,
+            description=f"Task goal: {goal[:60]}{'...' if len(goal) > 60 else ''}",
+        )
+        return (
+            f"✅ Task goal anchor saved as {ref}. "
+            f"The AI will read this at the start of every follow-up turn to stay oriented."
+        )

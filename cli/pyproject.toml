@@ -54,6 +54,15 @@ tools = [
     "google-auth-httplib2>=0.1",
 ]
 
+# ── Optional: document generation (PDF, PPTX, XLSX, DOCX) ─────────────────────
+# Install with: pip install "cowork[documents]"
+documents = [
+    "reportlab>=4.0",      # PDF generation
+    "python-pptx>=1.0",   # PowerPoint (.pptx)
+    "openpyxl>=3.1",      # Excel (.xlsx)
+    "python-docx>=1.1",   # Word (.docx)
+]
+
 # ── Optional: everything ───────────────────────────────────────────────────────
 # Install with: pip install "cowork[all]"
 all = [
@@ -61,6 +70,10 @@ all = [
     "sentence-transformers>=3.0",
     "torch>=2.0; platform_machine != 'arm64'",
     "youtube-transcript-api>=0.6",
+    "reportlab>=4.0",
+    "python-pptx>=1.0",
+    "openpyxl>=3.1",
+    "python-docx>=1.1",
 ]
 
 [project.scripts]

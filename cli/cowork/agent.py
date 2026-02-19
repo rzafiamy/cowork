@@ -208,6 +208,29 @@ class GeneralPurposeAgent:
         self.executor = ToolExecutor(scratchpad, config, status_callback=self.status_cb)
         self.firewall = FirewallManager()
 
+    # ── Scratchpad Index Builder ───────────────────────────────────────────────
+
+    def _build_scratchpad_index(self) -> str:
+        """
+        Build a compact, human-readable scratchpad index to inject into
+        the system prompt. Gives the AI immediate awareness of stored context
+        without needing to call scratchpad_list first.
+        """
+        try:
+            items = self.scratchpad.list_all()
+            if not items:
+                return "(empty — no task context stored yet)"
+            lines = []
+            for item in items:
+                key = item['key']
+                desc = item.get('description') or 'no description'
+                size = item.get('size_chars', 0)
+                marker = " ← 🎯 TASK GOAL" if key == "task_goal" else ""
+                lines.append(f"• ref:{key} — {desc} ({size} chars){marker}")
+            return "\n".join(lines)
+        except Exception:
+            return "(scratchpad unavailable)"
+
     # ── Input Gatekeeper ──────────────────────────────────────────────────────
 
     def _gatekeeper(self, user_input: str, session: Session) -> str:
@@ -268,6 +291,10 @@ class GeneralPurposeAgent:
             display = self.router.get_category_display(categories)
             self.status_cb(f"🎯  Routed to: {display} (confidence: {routing_info['confidence']:.0%})")
 
+        # ── Always include SESSION_SCRATCHPAD so task_goal tools are always available ──
+        if "SESSION_SCRATCHPAD" not in categories and "ALL_TOOLS" not in categories:
+            categories = list(categories) + ["SESSION_SCRATCHPAD"]
+
         trace.add_step("routing", routing_info)
         trace.categories = categories
         job.categories = categories
@@ -285,11 +312,13 @@ class GeneralPurposeAgent:
                 self.status_cb(f"🔌 Enabled {len(premium_tools)} tool(s) for this task.")
 
         # ── Build System Prompt ───────────────────────────────────────────────
+        scratchpad_index = self._build_scratchpad_index()
         system_prompt = AGENT_SYSTEM_PROMPT.format(
             current_datetime=dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %z"),
             memory_context=memory_context or "(No memory context yet)",
             session_id=session.session_id[:8],
             message_count=len(session.messages),
+            scratchpad_index=scratchpad_index,
         )
 
         # ── Build Messages ────────────────────────────────────────────────────

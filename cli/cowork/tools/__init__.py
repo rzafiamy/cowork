@@ -12,7 +12,8 @@ from .builtin.scratchpad import (
     ScratchpadSaveTool, 
     ScratchpadListTool, 
     ScratchpadReadChunkTool, 
-    ScratchpadSearchTool
+    ScratchpadSearchTool,
+    ScratchpadUpdateGoalTool,
 )
 from .builtin.workspace import (
     WorkspaceWriteTool, 
@@ -33,6 +34,12 @@ from .builtin.connectors import (
     StorageWriteTool, 
     GetWeatherTool
 )
+from .builtin.document import (
+    DocumentCreatePdfTool,
+    DocumentCreatePptxTool,
+    DocumentCreateXlsxTool,
+    DocumentCreateDocxTool,
+)
 
 # Register builtin tools
 def _register_builtin():
@@ -44,6 +51,7 @@ def _register_builtin():
     registry.register(ScratchpadListTool)
     registry.register(ScratchpadReadChunkTool)
     registry.register(ScratchpadSearchTool)
+    registry.register(ScratchpadUpdateGoalTool)
     registry.register(WorkspaceWriteTool)
     registry.register(WorkspaceReadTool)
     registry.register(WorkspaceListTool)
@@ -57,6 +65,10 @@ def _register_builtin():
     registry.register(KanbanAddTaskTool)
     registry.register(StorageWriteTool)
     registry.register(GetWeatherTool)
+    registry.register(DocumentCreatePdfTool)
+    registry.register(DocumentCreatePptxTool)
+    registry.register(DocumentCreateXlsxTool)
+    registry.register(DocumentCreateDocxTool)
 
 def _register_external():
     from .external.adapter import ExternalToolAdapter

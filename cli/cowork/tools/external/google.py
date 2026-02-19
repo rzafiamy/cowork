@@ -3,8 +3,10 @@
 Implementations for Google Calendar, Drive, and Gmail.
 """
 
+import base64
 import time
 from pathlib import Path
+from typing import Optional
 from .utils import _env
 
 try:
@@ -87,20 +89,66 @@ def google_drive_upload_text(filename: str, content: str, mime_type: str = "text
         return f"✅ File uploaded to Drive. ID: {file.get('id')}"
     except Exception as e: return f"❌ Drive upload error: {e}"
 
-def gmail_send_email(recipient: str, subject: str, body: str) -> str:
-    import base64
+def gmail_send_email(
+    recipient: str,
+    subject: str,
+    body: str,
+    attachments: Optional[list] = None,
+    html: bool = False,
+) -> str:
+    import base64 as _base64
+    import mimetypes
     from email.mime.multipart import MIMEMultipart
     from email.mime.text import MIMEText
+    from email.mime.base import MIMEBase
+    from email import encoders
+
     creds, err = _get_google_creds(["https://www.googleapis.com/auth/gmail.send"])
     if err: return err
     try:
         service = build("gmail", "v1", credentials=creds)
-        message = MIMEMultipart()
-        message["to"], message["subject"] = recipient, subject
-        message.attach(MIMEText(body))
-        raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+
+        message = MIMEMultipart("mixed")
+        message["to"] = recipient
+        message["subject"] = subject
+
+        # Body
+        body_part = MIMEMultipart("alternative")
+        body_part.attach(MIMEText(body, "html" if html else "plain", "utf-8"))
+        message.attach(body_part)
+
+        # Attachments
+        attach_errors = []
+        if attachments:
+            for path_str in attachments:
+                path = Path(path_str.strip()).expanduser()
+                if not path.exists() or not path.is_file():
+                    attach_errors.append(f"File not found: {path}")
+                    continue
+                mime_type, _ = mimetypes.guess_type(str(path))
+                main_type, sub_type = (mime_type.split("/", 1) if mime_type else ("application", "octet-stream"))
+                try:
+                    with open(path, "rb") as f:
+                        data = f.read()
+                    part = MIMEBase(main_type, sub_type)
+                    part.set_payload(data)
+                    encoders.encode_base64(part)
+                    part.add_header("Content-Disposition", "attachment", filename=path.name)
+                    message.attach(part)
+                except Exception as e:
+                    attach_errors.append(f"Could not attach {path.name}: {e}")
+
+        raw = _base64.urlsafe_b64encode(message.as_bytes()).decode()
         service.users().messages().send(userId="me", body={"raw": raw}).execute()
-        return f"✅ Email sent via Gmail to {recipient}."
+
+        result = f"✅ Email sent via Gmail to {recipient}."
+        if attachments:
+            ok_count = len(attachments) - len(attach_errors)
+            result += f" ({ok_count}/{len(attachments)} attachment(s) included)"
+        if attach_errors:
+            result += f"\n⚠️ Attachment warnings:\n" + "\n".join(f"  • {e}" for e in attach_errors)
+        return result
+
     except Exception as e: return f"❌ Gmail error: {e}"
 
 TOOLS = [
@@ -168,13 +216,28 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "gmail_send_email",
-            "description": "Send an email via Gmail API.",
+            "description": (
+                "Send an email via Gmail API. Supports plain text or HTML body "
+                "and optional file attachments (pass absolute file paths)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "recipient": {"type": "string"},
-                    "subject": {"type": "string"},
-                    "body": {"type": "string"},
+                    "recipient": {"type": "string", "description": "Recipient email address"},
+                    "subject":   {"type": "string", "description": "Email subject line"},
+                    "body":      {"type": "string", "description": "Email body (plain text or HTML)"},
+                    "attachments": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Optional list of absolute file paths to attach. "
+                            "Example: [\"/home/user/.cowork/workspace/my-session/artifacts/report.pdf\"]"
+                        ),
+                    },
+                    "html": {
+                        "type": "boolean",
+                        "description": "Set to true if the body is HTML. Defaults to false.",
+                    },
                 },
                 "required": ["recipient", "subject", "body"],
             },

@@ -40,6 +40,30 @@ not raw data. Prefer parallel tool execution over sequential when tasks are inde
 - Always check scratchpad_list before assuming data is unavailable
 - On [GATEWAY ERROR]: inspect arguments and retry; on [TOOL ERROR]: try an alternative
 
+## 🎯 Multi-Step Task Anchoring (CRITICAL — never skip)
+For ANY task that spans multiple turns or involves iterative creation (slides, reports,
+documents, code, plans, designs, etc.), you MUST use the scratchpad as a **task anchor**.
+
+**Rule 1 — On task START**: When you begin a multi-step creative or iterative task,
+call `scratchpad_save` with key=`task_goal` and content formatted as:
+```
+GOAL: <one-line description of the user's final objective>
+SCOPE: <key constraints — e.g. "10 slides, business audience, dark theme">
+CURRENT_STATE: <what has been produced so far — e.g. "slides 1-10 created">
+NEXT_STEPS: <what remains to be done>
+USER_PREFERENCES: <style, tone, format choices stated by user>
+```
+
+**Rule 2 — On every FOLLOW-UP turn**: If the scratchpad index (shown below) contains
+a `task_goal` entry, call `scratchpad_read_chunk` with key=`task_goal` as your **FIRST
+tool call** before taking any action. This orients you to the full task context.
+
+**Rule 3 — After each refinement**: Update `task_goal` with `scratchpad_save` to reflect
+the new CURRENT_STATE and revised NEXT_STEPS. This keeps the anchor fresh.
+
+The goal of this system: if a conversation is compressed or context is lost, you can
+always recover the full task picture from the scratchpad in one tool call.
+
 ## 📅 Temporal Context
 Current date/time: {current_datetime}
 
@@ -48,7 +72,10 @@ Current date/time: {current_datetime}
 
 ## 📋 Session Context
 Session ID: {session_id}
-Messages in context: {message_count}\
+Messages in context: {message_count}
+
+## 🗂️ Scratchpad Index (live snapshot)
+{scratchpad_index}\
 """
 
 # ─── Context Compression ──────────────────────────────────────────────────────
@@ -77,6 +104,18 @@ Generate a short, descriptive title (3–6 words) for a conversation that begins
 Return ONLY the title — no quotes, no punctuation at the end.\
 """
 
+# ─── Task Goal Template ───────────────────────────────────────────────────────
+# Used as a hint for the AI when writing a task_goal to the scratchpad.
+# Not injected by the system; referenced in AGENT_SYSTEM_PROMPT guidance.
+
+TASK_GOAL_TEMPLATE = """\
+GOAL: {goal}
+SCOPE: {scope}
+CURRENT_STATE: {current_state}
+NEXT_STEPS: {next_steps}
+USER_PREFERENCES: {user_preferences}\
+"""
+
 # ─── Meta-Router ─────────────────────────────────────────────────────────────
 # Brain-phase prompt that classifies user intent into tool categories.
 # Category descriptions are kept in a map to allow dynamic filtering based on
@@ -97,6 +136,7 @@ ROUTER_CATEGORY_DESCRIPTIONS = {
     "SOCIAL_TOOLS": "LinkedIn profile/post search",
     "VISION": "Image analysis, OCR",
     "DATA_AND_UTILITY": "Math, charts, diagrams, time/date",
+    "DOCUMENT_TOOLS": "Create PDF, PowerPoint (PPTX), Excel (XLSX), or Word (DOCX) documents",
     "SESSION_SCRATCHPAD": "Store or retrieve large data within this session",
     "APP_CONNECTORS": "Notes, Kanban tasks, calendar events, file storage",
     "WORKSPACE_TOOLS": "Read/write files to the session workspace",
