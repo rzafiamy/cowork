@@ -36,12 +36,19 @@ class APIClient:
         api_key: str,
         timeout: float = 60.0,
         token_callback: Optional[Callable[[str, dict], None]] = None,
+        request_delay_ms: int = 0,
+        max_retries: int = 5,
+        retry_base_delay: float = 2.0,
     ) -> None:
         self.endpoint = endpoint.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
-        self.token_callback = token_callback  # called with (model, usage_dict)
+        self.token_callback = token_callback
+        self.request_delay_ms = request_delay_ms
+        self.max_retries = max_retries
+        self.retry_base_delay = retry_base_delay
         self._client: Optional[httpx.AsyncClient] = None
+        self._last_call_time = 0.0
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -58,6 +65,15 @@ class APIClient:
     async def close(self) -> None:
         if self._client and not self._client.is_closed:
             await self._client.aclose()
+
+    async def _throttle(self) -> None:
+        if self.request_delay_ms <= 0:
+            return
+        elapsed = (time.time() - self._last_call_time) * 1000.0
+        wait = self.request_delay_ms - elapsed
+        if wait > 0:
+            await asyncio.sleep(wait / 1000.0)
+        self._last_call_time = time.time()
 
     # ── Core Chat Completion ──────────────────────────────────────────────────
 
@@ -82,19 +98,29 @@ class APIClient:
             "max_tokens": max_tokens,
         }
         if tools:
-            payload["tools"] = tools
+            # Strip non-standard 'category' field if present (e.g. for Google AI compatibility)
+            clean_tools = []
+            for t in tools:
+                ct = t.copy()
+                ct.pop("category", None)
+                clean_tools.append(ct)
+            payload["tools"] = clean_tools
             payload["tool_choice"] = tool_choice
         if response_format:
             payload["response_format"] = response_format
 
+        # 1. Throttle
+        await self._throttle()
+
         last_error: Optional[Exception] = None
-        for attempt in range(self.MAX_RETRIES):
+        for attempt in range(self.max_retries):
             try:
                 client = self._get_client()
                 resp = await client.post("/chat/completions", json=payload)
                 if resp.status_code == 429:
-                    # Rate limit — back off
-                    delay = self.RETRY_BASE_DELAY * (2 ** attempt)
+                    # Rate limit — back off with jitter
+                    import random
+                    delay = self.retry_base_delay * (2 ** attempt) + random.uniform(0, 1)
                     await asyncio.sleep(delay)
                     continue
                 if resp.status_code >= 500:
@@ -122,7 +148,7 @@ class APIClient:
                 }
             except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as e:
                 last_error = e
-                delay = self.RETRY_BASE_DELAY * (2 ** attempt)
+                delay = self.retry_base_delay * (2 ** attempt)
                 await asyncio.sleep(delay)
             except APIError:
                 raise
@@ -131,11 +157,9 @@ class APIClient:
                 break
 
         if last_error is None:
-            # If we finished the loop without success and without a last_error, 
-            # it means we hit the rate limit (429) every single time.
-            raise APIError(f"API call failed after {self.MAX_RETRIES} attempts due to persistent Rate Limits (429).", 429)
+            raise APIError(f"API call failed after {self.max_retries} attempts due to persistent Rate Limits (429).", 429)
 
-        raise APIError(f"API call failed after {self.MAX_RETRIES} attempts: {last_error}")
+        raise APIError(f"API call failed after {self.max_retries} attempts: {last_error}")
 
     # ── Streaming Chat Completion ─────────────────────────────────────────────
 
@@ -162,8 +186,17 @@ class APIClient:
             "stream": True,
         }
         if tools:
-            payload["tools"] = tools
+            # Strip non-standard 'category' field if present (e.g. for Google AI compatibility)
+            clean_tools = []
+            for t in tools:
+                ct = t.copy()
+                ct.pop("category", None)
+                clean_tools.append(ct)
+            payload["tools"] = clean_tools
             payload["tool_choice"] = tool_choice
+
+        # 1. Throttle
+        await self._throttle()
 
         full_content = ""
         tool_calls_raw: dict[int, dict] = {}

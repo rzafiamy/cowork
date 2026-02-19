@@ -108,8 +108,8 @@ class ContextCompressor:
             if m.get("content")
         )
 
-        # Map phase: chunk and summarize
-        chunks = self._smart_chunk(history_text, chunk_size=3000)
+        # Map phase: chunk and summarize (12k chars ≈ 3k tokens)
+        chunks = self._smart_chunk(history_text, chunk_size=12000)
         summaries = []
         for chunk in chunks:
             try:
@@ -130,7 +130,10 @@ class ContextCompressor:
             "content": f"[CONVERSATION SUMMARY]\n{combined}",
         }
 
-        return [summary_message] + protected
+        # ALWAYS keep original system prompt at index 0 if it was role: system
+        system_msg = messages[0] if messages and messages[0].get("role") == "system" else {"role": "system", "content": system_prompt}
+
+        return [system_msg, summary_message] + protected
 
 
 # ─── Agent Trace ─────────────────────────────────────────────────────────────
@@ -155,6 +158,15 @@ class AgentTrace:
 
     def finish(self) -> None:
         self.end_time = time.time()
+        # Extract all tool calls from steps for easy persistence
+        self.all_tool_calls_executed = []
+        for s in self.steps:
+            if s["type"] == "tool_execution_result":
+                self.all_tool_calls_executed.append({
+                    "name": s["name"],
+                    "args": s["args"],
+                    "status": "success" if "[TOOL ERROR]" not in s["result"] else "error"
+                })
 
     @property
     def elapsed_seconds(self) -> float:
@@ -292,6 +304,9 @@ class GeneralPurposeAgent:
         self.status_cb("🤖  Phase 3 · REACT Execution Loop...")
         final_response = ""
 
+        last_tool_hash = None
+        repeat_count = 0
+
         for step in range(max_steps):
             # Context compression check
             messages = await self.compressor.optimize(messages, system_prompt, self.status_cb)
@@ -344,6 +359,22 @@ class GeneralPurposeAgent:
 
             # ── Tool Execution ────────────────────────────────────────────────
             if tool_calls and total_tool_calls < max_tool_calls:
+                # ── Loop Detection ──
+                try:
+                    current_hash = hash(json.dumps(tool_calls, sort_keys=True))
+                    if current_hash == last_tool_hash:
+                        repeat_count += 1
+                    else:
+                        repeat_count = 0
+                    last_tool_hash = current_hash
+                except Exception:
+                    pass
+
+                if repeat_count >= 2:
+                    self.status_cb("⚠️  Loop detected: repeating tool calls. Breaking.")
+                    final_response = content or "I'm sorry, I seem to be repeating myself. Let's try a different approach."
+                    break
+
                 max_per_step = self.config.get("max_tool_calls_per_step", OP_DEFAULTS["max_tool_calls_per_step"])
                 calls_this_step = tool_calls[:max_per_step]
 
@@ -397,6 +428,7 @@ class GeneralPurposeAgent:
                     result_str = await asyncio.get_event_loop().run_in_executor(
                         None, self.executor.execute, name, resolved_args
                     )
+                    trace.add_step("tool_execution_result", {"name": name, "args": resolved_args, "result": result_str})
                     return {"tool_call_id": tc["id"], "role": "tool", "content": result_str}
 
                 tool_results = await asyncio.gather(*[_exec_one(tc) for tc in calls_this_step])
@@ -416,6 +448,7 @@ class GeneralPurposeAgent:
         trace.finish()
         job.steps = len([s for s in trace.steps if s["type"] == "react_step_start"])
         job.tool_calls = trace.total_tool_calls
+        job.tool_calls_list = getattr(trace, "all_tool_calls_executed", [])
 
         # ── Phase 5: Memory Update ───────────────────────────────────────────
         self.status_cb("🚀  Phase 5 · Memory ingestion...")

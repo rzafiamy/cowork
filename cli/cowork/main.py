@@ -58,6 +58,8 @@ from .ui import (
     render_warning,
     run_setup_wizard,
 )
+from rich.tree import Tree
+from rich.syntax import Syntax
 
 # ─── Global State ─────────────────────────────────────────────────────────────
 _config = ConfigManager()
@@ -75,6 +77,9 @@ def _make_api_client() -> "APIClient":
         endpoint=_config.api_endpoint,
         api_key=_config.api_key,
         token_callback=_token_cb,
+        request_delay_ms=_config.get("request_delay_ms", 0),
+        max_retries=_config.get("max_retries", 5),
+        retry_base_delay=_config.get("retry_base_delay", 2.0),
     )
 
 
@@ -503,11 +508,21 @@ async def handle_command(
 
     elif command == "/trace":
         if _last_job:
-            from rich.tree import Tree
             tree = Tree(f"[primary]🔍 Trace: Job {_last_job.job_id}[/primary]")
             tree.add(f"[muted]Status:[/muted] {_last_job.status}")
             tree.add(f"[muted]Steps:[/muted] {_last_job.steps}")
             tree.add(f"[muted]Tool Calls:[/muted] {_last_job.tool_calls}")
+            
+            if hasattr(_last_job, "tool_calls_list") and _last_job.tool_calls_list:
+                tools_tree = tree.add("[tool]🛠️  Tool Execution History[/tool]")
+                for i, tc in enumerate(_last_job.tool_calls_list, 1):
+                    status_color = "success" if tc.get("status") == "success" else "error"
+                    tc_node = tools_tree.add(f"#{i} [{status_color}]{tc['name']}[/{status_color}]")
+                    if tc.get("args"):
+                        import json
+                        args_str = json.dumps(tc["args"], indent=2)
+                        tc_node.add(Syntax(args_str, "json", theme="monokai", background_color="default"))
+            
             tree.add(f"[muted]Categories:[/muted] {', '.join(_last_job.categories)}")
             tree.add(f"[muted]Prompt:[/muted] {_last_job.prompt[:80]}...")
             console.print(tree)
@@ -830,13 +845,17 @@ def chat(session_id: Optional[str], no_banner: bool) -> None:
 
     api_client = _make_api_client()
 
+    async def _run_chat():
+        try:
+            await interactive_loop(session, api_client)
+        finally:
+            await api_client.close()
+
     try:
-        asyncio.run(interactive_loop(session, api_client))
+        asyncio.run(_run_chat())
     except KeyboardInterrupt:
         console.print()
         console.print("[primary]  👋 Session saved. Goodbye![/primary]")
-    finally:
-        asyncio.run(api_client.close())
 
 
 @cli.command()

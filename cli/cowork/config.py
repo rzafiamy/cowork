@@ -53,6 +53,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "temperature_compress":       0.1,
     "temperature_agent":          0.4,
     "temperature_chat":           0.7,
+    "request_delay_ms":           0,
+    "max_retries":                5,
+    "retry_base_delay":           2.0,
     "search_freshness":           "1wk",
     "stream":                     True,
     "show_trace":                 False,
@@ -353,6 +356,7 @@ class AgentJob:
         self.steps: int = 0
         self.tool_calls: int = 0
         self.categories: list[str] = []
+        self.tool_calls_list: list[dict] = []
 
     def to_dict(self) -> dict:
         return self.__dict__.copy()
@@ -453,6 +457,20 @@ class TokenTracker:
     Persists to ~/.cowork/tokens.json.
     """
 
+    def finish(self) -> None:
+        self.end_time = time.time()
+        # Extract all tool calls from steps for easy persistence
+        self.all_tool_calls_executed = []
+        for s in self.steps:
+            if s["type"] == "tool_calls" and "tools" in s:
+                # 'tools' in trace.steps is just names, but we want more
+                pass
+            if s["type"] == "tool_execution_result":
+                self.all_tool_calls_executed.append({
+                    "name": s["name"],
+                    "args": s["args"],
+                    "status": "success" if "[TOOL ERROR]" not in s["result"] else "error"
+                })
     def __init__(self) -> None:
         self._data: dict[str, dict] = {}  # key: "endpoint|model"
         self._load()
