@@ -51,6 +51,7 @@ from .ui import (
     render_routing_info,
     render_session_list,
     render_success,
+    render_model_list,
     render_token_usage,
     render_tools_list,
     render_user_message,
@@ -613,6 +614,21 @@ async def handle_command(
             )
         else:
             render_warning(f"Unknown /ai subcommand: {sub}. Use /ai, /ai add, /ai switch, /ai remove, /ai save.")
+
+    elif command == "/model":
+        if len(parts) > 1:
+            # /model <name>
+            new_model = parts[1]
+            _config.set("model_text", new_model)
+            _config.set("model_router", new_model)
+            _config.set("model_compress", new_model)
+            render_success(f"🤖 Model switched to: [highlight]{new_model}[/highlight]")
+            needs_rebuild = True
+        else:
+            # /model (list)
+            with ThinkingSpinner("Fetching models"):
+                models = await api_client.list_models()
+            render_model_list(models, _config.model_text)
 
     else:
         render_warning(f"Unknown command: {command}. Type /help for available commands.")

@@ -215,6 +215,13 @@ class ThinkingSpinner:
             self._live.__exit__(None, None, None)
             self._live = None
 
+    def __enter__(self) -> "ThinkingSpinner":
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.stop()
+
 
 # ─── Response Renderer ────────────────────────────────────────────────────────
 
@@ -640,6 +647,34 @@ def render_ai_profiles(profiles: list[dict]) -> None:
     console.print(table)
 
 
+def render_model_list(models: list[str], current_model: str) -> None:
+    """Render a table of available AI models."""
+    if not models:
+        console.print(Panel(
+            "[muted]No models found or endpoint doesn't support listing.[/muted]",
+            title="[primary]🤖 AI Models[/primary]",
+            border_style="primary",
+        ))
+        return
+
+    table = Table(
+        title="🤖 Available AI Models",
+        box=box.ROUNDED,
+        border_style="primary",
+        header_style="primary",
+        show_lines=False,
+    )
+    table.add_column("Status", justify="center", width=8)
+    table.add_column("Model ID", style="highlight")
+
+    for m in sorted(models):
+        active = "[success]★ active[/success]" if m == current_model else "[dim_text]○[/dim_text]"
+        table.add_row(active, m)
+
+    console.print(table)
+    console.print(f"  [dim_text]Use [highlight]/model <id>[/highlight] to switch models.[/dim_text]")
+
+
 def render_tools_list(tools: list[dict]) -> None:
     """Render a table of all activated tools."""
     if not tools:
@@ -747,6 +782,8 @@ def render_help() -> None:
         ("/ai switch <name>",               "Switch to a saved AI profile"),
         ("/ai remove <name>",               "Remove a saved AI profile"),
         ("/ai save <name>",                 "Save current config as a profile"),
+        ("/model",                          "List available AI models on current endpoint"),
+        ("/model <name>",                   "Switch to a specific AI model"),
         ("/scratchpad",                     "List scratchpad contents"),
         ("/tools",                          "List all activated tools"),
         ("/trace",                          "Show last job trace"),
@@ -849,6 +886,8 @@ SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/ai switch ",              "Switch to a profile  e.g. /ai switch gpt4"),
     ("/ai remove ",              "Remove a profile  e.g. /ai remove gpt4"),
     ("/ai save ",                "Save current config as profile  e.g. /ai save myprofile"),
+    ("/model",                   "List available AI models on current endpoint"),
+    ("/model <name>",            "Switch to a specific AI model"),
     ("/scratchpad",              "List scratchpad contents for this session"),
     ("/tools",                   "List all active tools (built-in + configured)"),
     ("/trace",                   "Show execution trace of last job"),
