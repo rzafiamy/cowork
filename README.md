@@ -20,17 +20,17 @@ Each user message is processed end-to-end through a 5-phase pipeline:
 | Phase | Component | Description |
 |-------|-----------|-------------|
 | 🛡️ Phase 1 | **Input Gatekeeper** | Token estimation; large inputs automatically offloaded to scratchpad |
-| 🧠 Phase 2 | **Meta-Router** | Intent classification at T=0.0 → selects relevant tool categories |
+| 🧠 Phase 2 | **Meta-Router** | Intent classification at T=0.0 + tool-need calibration (`CONVERSATIONAL_ONLY` when tools are unlikely) |
 | 🤖 Phase 3 | **REACT Loop** | Iterative Reason → Act → Observe with parallel tool execution |
 | 🗜️ Phase 4 | **Context Compressor** | Map-Reduce history summarisation at T=0.1 when token budget is tight |
-| 🚀 Phase 5 | **Memory Ingestion** | Non-blocking Memoria update (knowledge graph + session summary) |
+| 🚀 Phase 5 | **Memory Ingestion** | Selective Memoria update for durable profile/preferences/project-state facts |
 
 ### Step Budget & Completion Guarantee
 
 The REACT loop runs for up to `max_steps` (default: 15) iterations. At the limit:
 
 1. **Self-assessment call** — the agent makes one final tool-free LLM call to honestly report what was achieved and what remains
-2. **Structured status** — response always begins with `✅ GOAL ACHIEVED`, `⚠️ GOAL PARTIALLY ACHIEVED`, or `❌ GOAL NOT ACHIEVED`
+2. **Structured status** — response uses `✅ GOAL ACHIEVED`, `⚠️ GOAL PARTIALLY ACHIEVED`, or `❌ GOAL NOT ACHIEVED` only for step-limit self-assessment turns
 3. **Continuation handoff** — the agent tells the user exactly what to say to continue in the next turn
 4. **No hallucination** — the agent is explicitly forbidden from fabricating completed work
 
@@ -115,6 +115,9 @@ Prefix your message with a hashtag to **fast-track routing** and bypass the Meta
 | `#calc` | DATA_AND_UTILITY | `#calc compound interest at 5% for 10 years` |
 | `#note` | APP_CONNECTORS | `#note meeting summary: decided on Python` |
 | `#doc` | DOCUMENT_TOOLS | `#doc create Q1 report as PDF` |
+
+Additionally, Cowork has an internal **conversational fast-path** for short conceptual Q&A.  
+When triggered, it skips full router + tool schema setup and uses a compact chat system prompt.
 
 ---
 
@@ -204,7 +207,11 @@ Config lives in `~/.cowork/config.json`. Change at runtime with `/config set <ke
 | `max_total_tool_calls` | `30` | Hard cap on total tool calls per turn |
 | `max_tool_calls_per_step` | `5` | Max parallel tool calls per step |
 | `context_limit_tokens` | `6000` | Trigger threshold for history compression |
-| `temperature_agent` | `0.7` | Agent reasoning temperature |
+| `temperature_agent` | `0.4` | Agent reasoning temperature |
+| `memory_min_similarity` | `0.2` | Minimum semantic similarity for memory retrieval |
+| `memory_min_weight` | `0.015` | Minimum decayed relevance score for memory retrieval |
+| `memory_topic_overlap_min` | `1` | Minimum keyword overlap between query and memory fact |
+| `memory_high_similarity_bypass` | `0.55` | Allows highly similar facts through even with low term overlap |
 | `stream` | `true` | Enable streaming output in the terminal |
 
 Works with any OpenAI-compatible API: **OpenAI, Ollama, LM Studio, Together AI, Groq**, etc.
@@ -213,11 +220,12 @@ Works with any OpenAI-compatible API: **OpenAI, Ollama, LM Studio, Together AI, 
 
 ## 🧠 Memoria (Long-Term Memory)
 
-Cowork maintains a **Knowledge Graph** of facts extracted from every conversation:
+Cowork maintains a **Knowledge Graph** of facts extracted from durable user context:
 
-- Extracts `(subject, predicate, object)` triplets from user messages
+- Extracts `(subject, predicate, object)` triplets from durable user profile/preference/project-state messages
 - Applies **Exponential Weighted Average (EWA)** temporal decay for relevance scoring
-- Maintains rolling session summaries merged across turns
+- Uses semantic + topical relevance gates during retrieval to avoid unrelated memories
+- Maintains rolling session summaries only when the user turn is durable enough to persist
 - All stored locally in `~/.cowork/memoria/` — no external vector DB required
 
 ---

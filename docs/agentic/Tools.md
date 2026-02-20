@@ -5,6 +5,8 @@ This document outlines the architectural strategy for **Tool Management** within
 ## 1. 🔍 Overview
 Tools are the "hands" of the agent, allowing it to interact with external systems, perform calculations, and fetch real-time data. The system is designed to be **dynamic**, **safe**, and **scalable**, supporting both hardcoded system tools and user-configured connectors.
 
+> Current code references: `cli/cowork/tools/manager.py`, `cli/cowork/tools/registry.py`, `cli/cowork/router.py`.
+
 ---
 
 ## 2. 🧩 Tool Discovery & Sources
@@ -27,17 +29,18 @@ The agent does not simply receive a static list of tools. Instead, the available
 To prevent overwhelming the LLM with hundreds of tool definitions (which degrades reasoning performance and consumes tokens), we employ an **Intelligence Routing** strategy via the `MetaRouter`.
 
 ### 3.1 Categorization
-Tools are grouped into high-level functional categories in `MetaRouter.js`:
+Tools are grouped into high-level functional categories in `cli/cowork/router.py`:
 *   `🔍 SEARCH_AND_INFO`: Retrieval tasks.
 *   `🎥 MEDIA_AND_ENTERTAINMENT`: Image generation, YouTube.
 *   `📊 DATA_AND_UTILITY`: Charts, calculation.
 *   `🔗 APP_CONNECTORS`: Third-party integrations.
+*   `💭 CONVERSATIONAL_ONLY`: Direct-answer mode with no tool schema.
 
 ### 3.2 The Routing Phase
 Before the main execution loop, the `MetaRouter` performs an **Intent Classification** step using a small, fast model (or the main model).
 1.  **Input**: User Prompt.
-2.  **Output**: List of relevant categories (e.g., `['SEARCH_AND_INFO']`).
-3.  **Result**: The `getToolsSchema()` method filters the master list, injecting *only* the relevant tools into the system prompt for the main agent execution.
+2.  **Output**: List of relevant categories (or `CONVERSATIONAL_ONLY`).
+3.  **Result**: `get_available_tools_for_categories()` filters the master list and returns only relevant tools.
 
 ---
 
@@ -57,7 +60,7 @@ flowchart LR
 ### 4.1 Usage Detection
 The `APIClient` parses the `tool_calls` array from the LLM response. The system supports parallel tool execution (multiple tools in one turn).
 
-### 4.2 The Execution Gateway (`ExecutionGateway.js`)
+### 4.2 The Execution Gateway (`ExecutionGateway` in `cli/cowork/tools/manager.py`)
 This is the firewall between the LLM and the code.
 1.  **🛡️ Schema Validation**: Verifies that required arguments exist and types match (String vs Number).
     *   *Failure*: Throws immediate error back to agent loop.
@@ -66,7 +69,7 @@ This is the firewall between the LLM and the code.
     *   *Solution*: The 'Pointer System'.
     *   *Logic*: If an argument is `"ref:input_123"`, the Gateway fetches the actual content from `Scratchpad` and injects it into the tool execution.
 
-### 4.3 The Tool Executor (`ToolExecutor.js`)
+### 4.3 The Tool Executor (`ToolExecutor` in `cli/cowork/tools/manager.py`)
 Handles the actual logic.
 *   **Standard Tools**: Executed directly via internal methods.
 *   **Connectors**: Dispatched to `ConnectorService.executeTool()`.

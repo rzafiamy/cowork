@@ -20,6 +20,15 @@ The system is partitioned into three functional "Cerebral Zones":
 ### 🛠️ Zone 3: Execution (The Worker)
 *Recursive reasoning and tool execution.*
 
+### ✅ Current CLI Runtime Notes (2026)
+- Adds a **conversational fast-path** for short conceptual turns (`CONVERSATIONAL_ONLY`).
+- Uses a **split system prompt strategy**:
+  - `AGENT_CHAT_SYSTEM_PROMPT` for simple chat turns.
+  - `AGENT_SYSTEM_PROMPT` for multi-step/tool-oriented turns.
+- Limits `✅/⚠️/❌ GOAL ...` status banners to **step-limit self-assessment** only.
+- Applies **selective memory persistence** (durable user profile/preferences/project state).
+- Applies **semantic + topical relevance gates** for memory retrieval.
+
 ```mermaid
 graph TD
     User((👤 User)) -->|Input| Gatekeeper[🛡️ Input Gatekeeper]
@@ -29,22 +38,26 @@ graph TD
         Offload -->|Ref Key| JobMgr
         Gatekeeper -- "Valid" --> JobMgr{⚙️ Agent Job Manager}
         
-        JobMgr -->|Persist State| Storage[(💾 localStorage)]
+        JobMgr -->|Persist State| Storage[(💾 ~/.cowork/jobs.json)]
         JobMgr -->|Queue Check| Queue{🚦 Queue < 10?}
     end
 
     subgraph "Phase 2: Preparation (The Brain)"
         Queue -- Yes --> Router[🧭 Meta-Router]
-        Router -->|Temp 0.0| Classifier[🔍 Intent Classifier]
-        Classifier -->|Select| Tools[🛠️ Tool Schema Loading]
+        Router -->|Temp 0.0 + tool-probability| Classifier[🔍 Intent Classifier]
+        Classifier -->|CONVERSATIONAL_ONLY| ChatPath[💭 Direct Chat Path]
+        Classifier -->|Tool-capable route| Tools[🛠️ Tool Schema Loading]
         Classifier -->|Inject| Actions[⚡ Action Instructions]
     end
 
     subgraph "Phase 3: Execution Loop (The Worker)"
+        ChatPath --> Agent
         Tools --> Agent[🤖 General Purpose Agent]
         Actions --> Agent
         
-        Agent -->|1. Check Context| Compressor[🖇️ Context Compressor]
+        Agent -->|1. Prompt Mode Select| PromptSplit{🧩 Chat Prompt or Workflow Prompt}
+        PromptSplit -->|Workflow Prompt| Compressor[🖇️ Context Compressor]
+        PromptSplit -->|Chat Prompt| LLM_G
         Compressor -- "Atomic Map-Reduce" --> LLM_S[📉 LLM Temp 0.1]
         LLM_S -->|Summary| Agent
         
@@ -80,6 +93,7 @@ graph TD
 ## 💎 Core Philosophical Pillars
 - 💰 **Context is Currency**: Don't spend tokens on raw data unless required for reasoning.
 - 🎯 **Precision over Creativity**: Logic tiers (routing, compression) run at near-zero temperature.
-- ⚡ **Parallel-First Orchestration**: Intent classification, memory retrieval, and tool discovery run concurrently to minimize "time-to-first-token."
+- ⚡ **Fast-Path First**: Simple conceptual requests bypass heavy orchestration.
 - 💾 **Persistence & Caching**: Every job is synced to survive crashes, and user context is cached to eliminate redundant Auth round-trips.
+- 🧠 **Memory Discipline**: Only durable memories are persisted; only relevant memories are injected.
 - 🔊 **Fail Loudly & Recursively**: Errors are fed back as observations for AI self-healing.

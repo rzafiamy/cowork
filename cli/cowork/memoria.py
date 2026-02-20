@@ -33,6 +33,11 @@ MEMORIA_DB = MEMORIA_DIR / "memoria.db"
 
 # ─── Embedding dimension for all-MiniLM-L6-v2 ────────────────────────────────
 EMBED_DIM = 384
+STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
+    "how", "i", "in", "is", "it", "of", "on", "or", "that", "the", "this",
+    "to", "we", "what", "when", "where", "who", "why", "with", "you", "your",
+}
 
 # ─── Prompts are centralized in prompts.py ───────────────────────────────────
 # Import: TRIPLET_EXTRACTION_PROMPT, SESSION_SUMMARY_PROMPT, CONTEXT_FUSION_TEMPLATE
@@ -184,6 +189,13 @@ class Memoria:
         self.config = config
         self.decay_rate = config.get("decay_rate", OP_DEFAULTS["decay_rate"])
         self.top_k = config.get("top_k_memories", OP_DEFAULTS["top_k_memories"])
+        self.min_memory_similarity = config.get("memory_min_similarity", OP_DEFAULTS["memory_min_similarity"])
+        self.min_memory_weight = config.get("memory_min_weight", OP_DEFAULTS["memory_min_weight"])
+        self.topic_overlap_min = config.get("memory_topic_overlap_min", OP_DEFAULTS["memory_topic_overlap_min"])
+        self.high_similarity_bypass = config.get(
+            "memory_high_similarity_bypass",
+            OP_DEFAULTS["memory_high_similarity_bypass"],
+        )
 
         self._db, self._vec_available = _open_db()
         self._embedder = _LocalEmbedder.get()
@@ -237,6 +249,24 @@ class Memoria:
             triplets=triplets_str,
         )
 
+    def _topic_terms(self, text: str) -> set[str]:
+        terms = set(re.findall(r"[a-zA-Z0-9_]+", text.lower()))
+        return {t for t in terms if len(t) >= 3 and t not in STOPWORDS}
+
+    def _passes_relevance_gate(self, query: str, triplet_text: str, similarity: float, weight: float) -> bool:
+        if similarity < self.min_memory_similarity and weight < self.min_memory_weight:
+            return False
+
+        q_terms = self._topic_terms(query)
+        if not q_terms:
+            return similarity >= self.min_memory_similarity
+
+        t_terms = self._topic_terms(triplet_text)
+        overlap = len(q_terms & t_terms)
+        if overlap >= self.topic_overlap_min:
+            return True
+        return similarity >= self.high_similarity_bypass
+
     def _get_weighted_triplets(self, query: str) -> list[dict]:
         """
         Semantic search with EWA temporal decay.
@@ -281,14 +311,16 @@ class Memoria:
                         delta_min = (now - created_at).total_seconds() / 60.0
                         weight = similarity * math.exp(-self.decay_rate * delta_min)
 
-                        weighted.append({
-                            "id": row["id"],
-                            "subject": row["subject"],
-                            "predicate": row["predicate"],
-                            "object": row["object"],
-                            "weight": weight,
-                            "similarity": similarity,
-                        })
+                        triplet_text = f"{row['subject']} {row['predicate']} {row['object']}"
+                        if self._passes_relevance_gate(query, triplet_text, similarity, weight):
+                            weighted.append({
+                                "id": row["id"],
+                                "subject": row["subject"],
+                                "predicate": row["predicate"],
+                                "object": row["object"],
+                                "weight": weight,
+                                "similarity": similarity,
+                            })
                     weighted.sort(key=lambda t: t["weight"], reverse=True)
                     return weighted
             except Exception:
@@ -326,7 +358,7 @@ class Memoria:
             delta_min = (now - created_at).total_seconds() / 60.0
             weight = similarity * math.exp(-self.decay_rate * delta_min)
 
-            if weight > 0.001 or similarity > 0:
+            if self._passes_relevance_gate(query, triplet_text, similarity, weight):
                 weighted.append(
                     {
                         "id": row["id"],
@@ -343,12 +375,24 @@ class Memoria:
 
     # ── Write Path ────────────────────────────────────────────────────────────
 
+    def _is_durable_memory_candidate(self, user_message: str) -> bool:
+        text = user_message.strip().lower()
+        if not text:
+            return False
+        patterns = [
+            r"\bi am\b", r"\bmy name is\b", r"\bi live in\b", r"\bi work as\b",
+            r"\bi prefer\b", r"\bi like\b", r"\bi dislike\b", r"\balways\b", r"\bnever\b",
+            r"\bmy goal is\b", r"\bi'm working on\b", r"\bwe are building\b",
+            r"\bremember\b", r"\bsave this\b", r"\bfor future\b",
+        ]
+        return any(re.search(p, text) for p in patterns)
+
     async def update(self, user_message: str, assistant_response: str) -> None:
         """
         Non-blocking memory update (called in background).
         Extracts triplets and updates session summary in parallel.
         """
-        if not user_message:
+        if not user_message or not self._is_durable_memory_candidate(user_message):
             return
         try:
             import asyncio

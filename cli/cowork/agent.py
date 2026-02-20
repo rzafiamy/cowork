@@ -17,7 +17,7 @@ from typing import Any, Callable, Optional
 
 from .api_client import APIClient, APIError
 from .config import AgentJob, ConfigManager, FirewallManager, FirewallAction, JobManager, Scratchpad, Session
-from .prompts import AGENT_SYSTEM_PROMPT, COMPRESS_PROMPT, TITLE_GENERATION_PROMPT
+from .prompts import AGENT_CHAT_SYSTEM_PROMPT, AGENT_SYSTEM_PROMPT, COMPRESS_PROMPT, TITLE_GENERATION_PROMPT
 from .memoria import Memoria
 from .router import MetaRouter
 from .theme import (
@@ -228,6 +228,55 @@ class GeneralPurposeAgent:
         self.executor = ToolExecutor(scratchpad, config, status_callback=self.status_cb)
         self.firewall = FirewallManager()
 
+    def _is_simple_conversational_turn(self, text: str) -> bool:
+        """
+        Heuristic fast-path:
+        short conceptual questions with no obvious action/external-data verbs.
+        """
+        t = text.strip().lower()
+        if not t or len(t) > 220:
+            return False
+        action_verbs = [
+            "search", "find", "look up", "latest", "today", "current", "news",
+            "weather", "price", "stock", "scrape", "crawl", "fetch", "download",
+            "send", "email", "post", "publish", "save", "store", "schedule",
+            "book", "create file", "write file",
+        ]
+        if any(v in t for v in action_verbs):
+            return False
+        return "?" in t or len(t.split()) <= 20
+
+    def _strip_nonlimit_status_banner(self, text: str) -> str:
+        """
+        Remove GOAL banner if the model emits it on a normal non-limit turn.
+        """
+        if not text:
+            return text
+        lines = text.splitlines()
+        if not lines:
+            return text
+        first = lines[0].strip()
+        pattern = re.compile(r"^[✅⚠️❌]\s+GOAL\s+(ACHIEVED|PARTIALLY ACHIEVED|NOT ACHIEVED)\s*$")
+        if pattern.match(first):
+            stripped = "\n".join(lines[1:]).lstrip()
+            return stripped or text
+        return text
+
+    def _should_persist_memory(self, user_input: str) -> bool:
+        """
+        Persist only durable preference/profile/project-state messages.
+        """
+        text = user_input.strip().lower()
+        if not text:
+            return False
+        durable_patterns = [
+            r"\bi am\b", r"\bmy name is\b", r"\bi live in\b", r"\bi work as\b",
+            r"\bi prefer\b", r"\bi like\b", r"\bi dislike\b", r"\balways\b", r"\bnever\b",
+            r"\bmy goal is\b", r"\bi'm working on\b", r"\bwe are building\b",
+            r"\bremember\b", r"\bsave this\b", r"\bfor future\b",
+        ]
+        return any(re.search(p, text) for p in durable_patterns)
+
     # ── Scratchpad Index Builder ───────────────────────────────────────────────
 
     def _build_scratchpad_index(self) -> str:
@@ -319,7 +368,21 @@ class GeneralPurposeAgent:
             # Fast-track: skip router, use predefined categories
             categories = action_mode.get("categories", ["ALL_TOOLS"])
             self.status_cb(f"⚡ Action Mode — bypassing router, using: {', '.join(categories)}")
-            routing_info = {"categories": categories, "confidence": 1.0, "reasoning": "Action mode"}
+            routing_info = {
+                "categories": categories,
+                "confidence": 1.0,
+                "reasoning": "Action mode",
+                "tool_probability": 1.0,
+            }
+        elif self._is_simple_conversational_turn(processed_input):
+            categories = ["CONVERSATIONAL_ONLY"]
+            routing_info = {
+                "categories": categories,
+                "confidence": 0.95,
+                "reasoning": "Fast-path conversational turn (skipped full router).",
+                "tool_probability": 0.1,
+            }
+            self.status_cb("⚡ Fast-path: conversational-only turn.")
         else:
             self.status_cb("🧭  Phase 2 · Meta-Routing intent classification...")
             self.trace_cb("router_request", {"prompt": processed_input})
@@ -329,7 +392,12 @@ class GeneralPurposeAgent:
             self.status_cb(f"🎯  Routed to: {display} (confidence: {routing_info['confidence']:.0%})")
 
         # ── Always include SESSION_SCRATCHPAD so task_goal tools are always available ──
-        if "SESSION_SCRATCHPAD" not in categories and "ALL_TOOLS" not in categories:
+        if (
+            "CONVERSATIONAL_ONLY" not in categories
+            and "CONVERSATIONAL" not in categories
+            and "SESSION_SCRATCHPAD" not in categories
+            and "ALL_TOOLS" not in categories
+        ):
             categories = list(categories) + ["SESSION_SCRATCHPAD"]
 
         trace.add_step("routing", routing_info)
@@ -338,18 +406,23 @@ class GeneralPurposeAgent:
         job.categories = categories
 
         # ── Memory Context Retrieval ───────────────────────────────────────────
-        self.status_cb("🧠  Retrieving memory context...")
-        memory_context = self.memoria.get_fused_context(processed_input)
-        self.trace_cb("memory_context", {"memory_context": memory_context})
+        memory_context = ""
+        if "CONVERSATIONAL_ONLY" not in categories:
+            self.status_cb("🧠  Retrieving memory context...")
+            memory_context = self.memoria.get_fused_context(processed_input)
+            self.trace_cb("memory_context", {"memory_context": memory_context})
+        else:
+            self.trace_cb("memory_context", {"memory_context": "", "skipped": True})
 
         # ── Build Tool Schema (Filters out unconfigured paid tools) ───────────
-        tools_schema = get_available_tools_for_categories(categories)
+        tools_schema = [] if "CONVERSATIONAL_ONLY" in categories else get_available_tools_for_categories(categories)
         self.trace_cb(
             "tools_schema_selected",
             {
                 "categories": categories,
                 "tool_names": [t["function"]["name"] for t in tools_schema],
                 "tools_schema": tools_schema,
+                "bypass_tool_schema": "CONVERSATIONAL_ONLY" in categories,
             },
         )
 
@@ -359,14 +432,22 @@ class GeneralPurposeAgent:
                 self.status_cb(f"🔌 Enabled {len(premium_tools)} tool(s) for this task.")
 
         # ── Build System Prompt ───────────────────────────────────────────────
-        scratchpad_index = self._build_scratchpad_index()
-        system_prompt = AGENT_SYSTEM_PROMPT.format(
-            current_datetime=dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %z"),
-            memory_context=memory_context or "(No memory context yet)",
-            session_id=session.session_id[:8],
-            message_count=len(session.messages),
-            scratchpad_index=scratchpad_index,
-        )
+        current_dt = dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %z")
+        if "CONVERSATIONAL_ONLY" in categories:
+            system_prompt = AGENT_CHAT_SYSTEM_PROMPT.format(
+                current_datetime=current_dt,
+                session_id=session.session_id[:8],
+                message_count=len(session.messages),
+            )
+        else:
+            scratchpad_index = self._build_scratchpad_index()
+            system_prompt = AGENT_SYSTEM_PROMPT.format(
+                current_datetime=current_dt,
+                memory_context=memory_context or "(No memory context yet)",
+                session_id=session.session_id[:8],
+                message_count=len(session.messages),
+                scratchpad_index=scratchpad_index,
+            )
 
         # ── Build Messages ────────────────────────────────────────────────────
         chat_history = session.get_chat_messages()
@@ -593,7 +674,7 @@ class GeneralPurposeAgent:
                 continue  # Loop back for next reasoning step
 
             # ── No more tool calls — we have a final answer ───────────────────
-            final_response = content
+            final_response = self._strip_nonlimit_status_banner(content)
             trace.add_step("final_answer", {"length": len(content), "finish_reason": finish_reason})
             self.trace_cb("final_answer", {"content": final_response, "finish_reason": finish_reason, "step": step + 1})
             break
@@ -646,10 +727,21 @@ class GeneralPurposeAgent:
         job.tool_calls_list = getattr(trace, "all_tool_calls_executed", [])
 
         # ── Phase 5: Memory Update ───────────────────────────────────────────
+        persist_memory = self._should_persist_memory(user_input)
         self.status_cb("🚀  Phase 5 · Memory ingestion...")
-        self.trace_cb("memory_update_request", {"user_input": user_input, "assistant_response": final_response})
-        await self.memoria.update(user_input, final_response)
-        self.trace_cb("memory_update_done", {})
+        self.trace_cb(
+            "memory_update_request",
+            {
+                "user_input": user_input,
+                "assistant_response": final_response,
+                "persist_memory": persist_memory,
+            },
+        )
+        if persist_memory:
+            await self.memoria.update(user_input, final_response)
+            self.trace_cb("memory_update_done", {"persisted": True})
+        else:
+            self.trace_cb("memory_update_done", {"persisted": False, "reason": "non-durable message"})
 
         return final_response
 

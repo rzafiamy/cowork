@@ -5,7 +5,7 @@ This document traces the path of a user request from the moment it leaves the ke
 ---
 
 ## 🟢 Phase 1: User Input & UI Layer
-*Components: `MessageHandler.js` ⮕ `ChatUI.js`*
+*Components: `cli/cowork/main.py` ⮕ `cli/cowork/ui.py`*
 
 1.  **⌨️ User Interaction**: Input is captured in the terminal interface.
 2.  **🧩 Pill Detection**: Checks for "Action Pills" (user workflows).
@@ -13,7 +13,7 @@ This document traces the path of a user request from the moment it leaves the ke
 4.  **⏱️ Timer Init**: A high-precision elapsed timer appears in the UI.
 
 ## 🟡 Phase 2: Session & Job Management
-*Components: `ChatManager.js` ⮕ `AgentJobManager.js`*
+*Components: `cli/cowork/main.py` ⮕ `cli/cowork/config.py` (`JobManager`)*
 
 1.  **🛡️ Input Gatekeeper**:
     *   Estimates tokens.
@@ -23,25 +23,32 @@ This document traces the path of a user request from the moment it leaves the ke
     *   💾 **Syncs to localStorage** for crash survival.
 
 ## 🔵 Phase 3: The Brain (Meta-Routing)
-*Components: `GeneralPurposeAgent.js` ⮕ `Router.js`*
+*Components: `cli/cowork/agent.py` ⮕ `cli/cowork/router.py`*
 
-1.  **🧭 Intent Discovery**: Lightweight call at **Temp 0.0**.
-2.  **🛠️ Schema Pruning**:
-    *   Filters 40+ tools down to 5-10 relevant ones.
-    *   📉 **Reduces token noise** and hallucination risk.
+1.  **⚡ Fast-Path Detection**: Short conceptual turns can skip full router and route directly to `CONVERSATIONAL_ONLY`.
+2.  **🧭 Intent Discovery**: If not fast-pathed, run lightweight classification at **Temp 0.0**.
+3.  **🛠️ Schema Pruning**:
+    *   `CONVERSATIONAL_ONLY` ⮕ no tool schema construction.
+    *   Tool-capable turns ⮕ filter to relevant categories.
+4.  **🎚️ Router Calibration**:
+    *   A tool-need probability score can downgrade a broad route to `CONVERSATIONAL_ONLY`.
+    *   📉 Reduces unnecessary orchestration and latency.
 
 ## 🟣 Phase 4: The Worker (REACT Loop)
-*Components: `GeneralPurposeAgent.js` ⮕ `ContextCompressor.js`*
+*Components: `cli/cowork/agent.py` (`GeneralPurposeAgent` + `ContextCompressor`)*
 
-1.  **🤔 Reasoning**: Agent analyzes context and formulates a plan.
-2.  **🖇️ Context Tuning**:
+1.  **🧩 Prompt Split**:
+    *   `AGENT_CHAT_SYSTEM_PROMPT` for conversational-only turns.
+    *   `AGENT_SYSTEM_PROMPT` for workflow/tool turns.
+2.  **🤔 Reasoning**: Agent analyzes context and formulates a plan.
+3.  **🖇️ Context Tuning**:
     *   Triggers **Atomic Compression** on giant messages.
     *   Inlines conversation summaries if the window is cramped.
-3.  **⚙️ Multi-Action**: Executes tools (Parallelized when possible).
-4.  **🥪 Output Guard**: Large tool results are "Sandwiched" before returning to the loop.
+4.  **⚙️ Multi-Action**: Executes tools (Parallelized when possible).
+5.  **🥪 Output Guard**: Large tool results are "Sandwiched" before returning to the loop.
 
 ## 🟠 Phase 5: Rendering & Finalization
-*Components: `ChatUI.js` ⮕ `APIClient.js` ⮕ `SessionStorage.js`*
+*Components: `cli/cowork/ui.py` ⮕ `cli/cowork/api_client.py` ⮕ `cli/cowork/config.py` (`Session`)*
 
 1.  **📡 Streaming**: Incremental markdown rendering with syntax highlighting.
 2.  **🎨 Multimodal Display**:
@@ -50,8 +57,12 @@ This document traces the path of a user request from the moment it leaves the ke
 3.  **🕵️ Trace Viewer**: 
     *   **On-Demand Loading**: Large `agent_trace` payloads are excluded from session load and fetched only when "Trace" is clicked.
 4.  **⚡ Non-Blocking Exit**:
-    *   **Memory Ingestion**: `Memoria.update()` runs in the background.
+    *   **Memory Ingestion**: `Memoria.update()` is called only for durable user turns.
     *   **DB Persistence**: Message saving and title generation are backgrounded, allowing the UI to stay responsive.
+
+### 🚨 Step-Limit Status Contract
+- `✅ GOAL ACHIEVED` / `⚠️ GOAL PARTIALLY ACHIEVED` / `❌ GOAL NOT ACHIEVED` banners are used **only** for step-limit self-assessment turns.
+- Normal conversational/tool turns should return direct answers without the banner.
 
 ---
 
@@ -77,14 +88,17 @@ sequenceDiagram
     end
     
     CM->>JobMgr: 🚦 startJob()
-    JobMgr->>JobMgr: 💾 Persist to localStorage
+    JobMgr->>JobMgr: 💾 Persist job state (jobs.json)
     
     JobMgr->>Agent: 🏃 run()
     
     alt Action Mode
         Agent->>Agent: ⚡ Inject Strict Intent
+    else Fast Conversational Path
+        Agent->>Agent: 💭 Route = CONVERSATIONAL_ONLY
+        Agent->>Agent: 🧩 Use Chat Prompt + No Tools Schema
     else Standard Mode
-        Agent->>Router: 🧭 _classifyRequest (T=0.0)
+        Agent->>Router: 🧭 _classifyRequest (T=0.0 + tool probability)
         Router-->>Agent: 🛠️ Relevant Tools
     end
     
@@ -115,13 +129,15 @@ sequenceDiagram
     JobMgr->>CM: onComplete(result)
     CM->>UI: 🔔 Render Final Response
     
-    Note over CM,S: 🚀 Background Persistence Phase
+    Note over CM,Agent: 🚀 Background Persistence Phase
     par Background Tasks
-        CM->>S: 💾 addMessage(trace, answer)
+        CM->>CM: 💾 addMessage(trace, answer)
         CM->>CM: 📝 autoGenerateTitleIfUnnamed()
-        Agent->>M: 🧠 memory.update()
-        M->>S: Update Knowledge Graph
-        M->>V: Ingest to Vector DB
+        alt Durable user message
+            Agent->>Agent: 🧠 memory.update()
+        else Non-durable one-off turn
+            Agent->>Agent: ⏭️ Skip memory update
+        end
     end
 ```
 

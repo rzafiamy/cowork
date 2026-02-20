@@ -7,14 +7,16 @@ This document details the cognitive strategies used to maximize accuracy while m
 ## 🧭 Meta-Tool Routing (The Brain)
 To prevent "Tool Fatigue" and context noise, we implement a **Dynamic Schema** strategy powered by a dedicated Router agent.
 
-### 🚦 The Logic Flow (Concurrent Optimization)
-Instead of a sequential bottleneck, we now use a **Parallel Initialization** strategy:
-1.  **⚡ Parallel Discovery**: The agent concurrently triggers:
-    *   **🔍 Intent Check**: A fast **T=0.0** call (JSON Mode) analyzes the prompt.
-    *   **🧩 Context Retrieval**: Memoria fetches fused persona and session data.
-    *   **🏗️ Full Schema Pre-fetch**: Loads all available base and connector tools.
-2.  **🎯 Just-In-Time Filtering**: Once intent is classified, the system instantly filters the pre-fetched schema to the required domain (e.g., `SEARCH_AND_INFO`).
-3.  **📉 Context Optimization**: If the prompt is oversized, the router uses **Head/Tail Truncation** to preserve the most relevant context whilst maintaining `[REFERENCE]` markers.
+### 🚦 The Logic Flow (Current)
+1.  **⚡ Local Fast-Path Check**: For short conceptual turns, the agent routes directly to `CONVERSATIONAL_ONLY`.
+2.  **🔍 Router Classification**: If not fast-pathed, run a **T=0.0** routing call with JSON output.
+3.  **🎚️ Tool-Need Calibration**: Apply a probability gate; low tool-need can force `CONVERSATIONAL_ONLY`.
+4.  **🎯 Just-In-Time Tool Schema**:
+    *   `CONVERSATIONAL_ONLY` ⮕ no tool schema.
+    *   Tool-capable routes ⮕ filtered tool schema.
+5.  **🧩 Prompt Mode Selection**:
+    *   Chat prompt for conversational-only.
+    *   Workflow prompt for multi-step/tool turns.
 
 ### 📂 Classification Domains
 - 🌍 **`SEARCH_AND_INFO`**: Primary knowledge retrieval and real-time data.
@@ -23,6 +25,7 @@ Instead of a sequential bottleneck, we now use a **Parallel Initialization** str
 - 📊 **`DATA_AND_UTILITY`**: Math, Charting, Diagrams, and Time.
 - 🧠 **`SESSION_SCRATCHPAD`**: Temporary "Work-RAM" for processing large data within a session. Volatile.
 - 🔌 **`APP_CONNECTORS`**: Persistent productivity ecosystem integrations (Notes, Kanban, Calendar, Storage, etc.) for long-term workspace records.
+- 💭 **`CONVERSATIONAL_ONLY`**: Minimal orchestration path for direct answers with no tools schema.
 
 ### 🛠️ Available Tools by Category
 
@@ -38,11 +41,14 @@ Instead of a sequential bottleneck, we now use a **Parallel Initialization** str
 ```mermaid
 graph TD
     A["👤 User Prompt"] --> B{"🧭 Meta-Router"}
-    B -- "Hello" --> C["💬 Conversational (0 Tools)"]
+    A --> X{"⚡ Local Fast-Path?"}
+    X -- "Yes" --> C["💭 CONVERSATIONAL_ONLY"]
+    X -- "No" --> B
+    B -- "Hello" --> C
     B -- "Research AI" --> D["🌍 Load SEARCH Tools"]
     B -- "Analyze Image" --> E["👁️ Load VISION Tools"]
     B -- "Low Confidence" --> G["🔥 Load ALL Tools"]
-    C --> F("🤖 LLM Execution")
+    C --> F("🤖 Chat Prompt Execution")
     D --> F
     E --> F
     G --> F
@@ -68,6 +74,12 @@ When a user clicks a **Workflow Pill** or triggers a command:
 1.  **⏩ Router Bypass**: Intent is already known; we skip classification to save ~1.5s.
 2.  **🔒 Strict Tooling**: The Agent is locked to the specific toolset defined for that Action.
 3.  **💉 Instruction Injection**: Custom workflow instructions are fused directly into the system prompt.
+
+---
+
+## 🚨 Status Banner Policy
+- Goal-status banners (`✅/⚠️/❌`) are reserved for **step-limit self-assessment** turns only.
+- Normal turns should answer directly without banner framing.
 
 ---
 

@@ -98,6 +98,7 @@ CATEGORY_STYLES = {
     "APP_CONNECTORS":         ("[sentinel]🔌 APP_CONNECTORS[/sentinel]",     "#FB923C"),
     "WORKSPACE_TOOLS":        ("[tool]🗂️  WORKSPACE_TOOLS[/tool]",           "#34D399"),
     "CONVERSATIONAL":         ("[muted]💬 CONVERSATIONAL[/muted]",           "#6B7280"),
+    "CONVERSATIONAL_ONLY":    ("[muted]💭 CONVERSATIONAL_ONLY[/muted]",      "#6B7280"),
     "ALL_TOOLS":              ("[error]🔥 ALL_TOOLS[/error]",                "#EF4444"),
     # ── External Tools ──────────────────────────────────────────────────────────
     "YOUTUBE_TOOLS":          ("[error]📺 YOUTUBE_TOOLS[/error]",            "#EF4444"),
@@ -131,6 +132,10 @@ OP_DEFAULTS = {
     "max_concurrent_jobs":        10,
     "decay_rate":                 0.02,
     "top_k_memories":             5,
+    "memory_min_similarity":      0.2,
+    "memory_min_weight":          0.015,
+    "memory_topic_overlap_min":   1,
+    "memory_high_similarity_bypass": 0.55,
     "temperature_router":         0.0,
     "temperature_compress":       0.1,
     "temperature_agent":          0.4,

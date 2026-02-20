@@ -42,6 +42,7 @@ You operate within a fixed number of reasoning steps per turn. Follow these rule
   - **NEVER fabricate results or pretend a task is done when it isn't.**
 
 **Rule C — Avoid meaningless responses**: A vague "I've done my best" or "let me know if you need more" without substance is a failure. Every response must either answer the question or honestly explain why it could not.
+**Rule D — Status banner scope**: Only use `✅ GOAL ACHIEVED`, `⚠️ GOAL PARTIALLY ACHIEVED`, or `❌ GOAL NOT ACHIEVED` when a `[SYSTEM NOTICE]` explicitly says you hit a step/tool limit. For normal turns, answer directly without a status banner.
 
 ## 🎨 Formatting
 - Use standard GitHub-flavored Markdown
@@ -90,6 +91,22 @@ Messages in context: {message_count}
 
 ## 🗂️ Scratchpad Index (live snapshot)
 {scratchpad_index}\
+"""
+
+AGENT_CHAT_SYSTEM_PROMPT = """\
+You are **Cowork**, an enterprise AI coworker.
+
+Provide concise, direct answers for conversational questions that do not require tools.
+Use simple Markdown when helpful.
+
+Important:
+- Do not call tools unless the user explicitly asks for external data or actions.
+- Do not use `✅ GOAL ACHIEVED`, `⚠️ GOAL PARTIALLY ACHIEVED`, or `❌ GOAL NOT ACHIEVED` unless a system notice says a step limit was reached.
+- If sentience/consciousness is asked: clearly state current limitations, then provide practical alternatives the user can build today.
+
+Current date/time: {current_datetime}
+Session ID: {session_id}
+Messages in context: {message_count}\
 """
 
 # ─── Context Compression ──────────────────────────────────────────────────────
@@ -157,6 +174,7 @@ ROUTER_CATEGORY_DESCRIPTIONS = {
     "WORKSPACE_TOOLS": "Read/write files to the session workspace",
     "CRON_TOOLS": "Schedule recurring tasks or future one-time agent runs",
     "CONVERSATIONAL": "Simple chat, opinions, greetings — no tools needed",
+    "CONVERSATIONAL_ONLY": "Direct answer mode with no tool schema construction",
     "ALL_TOOLS": "Genuinely ambiguous; needs full tool access",
 }
 
@@ -173,6 +191,7 @@ Respond ONLY with valid JSON:
 Guidance (not hard rules — use your judgment):
 - Prefer 2–3 focused categories over broad ALL_TOOLS
 - Use CONVERSATIONAL when no external data or action is needed
+- Use CONVERSATIONAL_ONLY for short conceptual Q&A where tool calls are very unlikely
 - For time-sensitive topics, prioritize available research tools over general ones
 - Avoid selecting categories that are not in the 'Available categories' list above\
 """

@@ -4,7 +4,6 @@ Implements the Brain phase — dynamic tool schema loading via intent classifica
 """
 
 import json
-import re
 from typing import Any, Optional
 
 from .prompts import ROUTER_CATEGORY_DESCRIPTIONS, ROUTER_SYSTEM_TEMPLATE, ROUTER_USER_TEMPLATE
@@ -20,6 +19,7 @@ def get_supported_domains() -> list[str]:
     
     # Always include special categories
     domains.add("CONVERSATIONAL")
+    domains.add("CONVERSATIONAL_ONLY")
     domains.add("ALL_TOOLS")
     
     return sorted(list(domains))
@@ -38,11 +38,40 @@ class MetaRouter:
         self.api_client = api_client
         self.model = model
 
+    def _estimate_tool_probability(self, prompt: str) -> float:
+        p = prompt.lower()
+        action_terms = [
+            "search", "look up", "find", "latest", "today", "current",
+            "scrape", "crawl", "send", "email", "post", "tweet",
+            "create", "generate", "build", "write file", "save", "store",
+            "schedule", "book", "calendar", "weather", "news", "price",
+        ]
+        has_action = any(t in p for t in action_terms)
+        long_turn = len(prompt) > 180
+        questiony = ("?" in prompt) and not has_action
+        if has_action:
+            return 0.75
+        if questiony and not long_turn:
+            return 0.12
+        if questiony:
+            return 0.25
+        return 0.4
+
     async def classify(self, prompt: str) -> dict:
         """
         Classify the user's intent.
         Returns: {"categories": [...], "confidence": float, "reasoning": str}
         """
+        # Fast-path for small conceptual turns that are unlikely to need tools.
+        tool_probability = self._estimate_tool_probability(prompt)
+        if tool_probability < 0.2 and len(prompt.strip()) <= 220:
+            return {
+                "categories": ["CONVERSATIONAL_ONLY"],
+                "confidence": 0.9,
+                "reasoning": "Fast-path conversational routing (low tool-need probability).",
+                "tool_probability": tool_probability,
+            }
+
         # Truncate very long prompts for routing (Head/Tail truncation)
         if len(prompt) > 2000:
             head = prompt[:800]
@@ -103,7 +132,12 @@ class MetaRouter:
                     hint = err_msg[:80] + "..." if len(err_msg) > 80 else err_msg
 
                 res = self._keyword_fallback(prompt)
-                res["reasoning"] = f"Keyword-based fallback (LLM routing failed: {hint})"
+                res["tool_probability"] = tool_probability
+                if tool_probability < 0.2:
+                    res["categories"] = ["CONVERSATIONAL_ONLY"]
+                    res["reasoning"] = "Calibrated to conversational-only after LLM routing failure."
+                else:
+                    res["reasoning"] = f"Keyword-based fallback (LLM routing failed: {hint})"
                 return res
 
         try:
@@ -126,15 +160,25 @@ class MetaRouter:
                 if "SEARCH_TOOLS" not in valid:
                     valid.append("SEARCH_TOOLS")
 
-            return {
+            routed = {
                 "categories": valid,
                 "confidence": parsed.get("confidence", 0.5),
                 "reasoning": parsed.get("reasoning", ""),
             }
+            routed["tool_probability"] = tool_probability
+            if routed["tool_probability"] < 0.2:
+                routed["categories"] = ["CONVERSATIONAL_ONLY"]
+                routed["reasoning"] = "Calibrated to conversational-only (low tool-need probability)."
+            return routed
         except Exception as e:
             # JSON parse failed — fall back to keyword routing
             res = self._keyword_fallback(prompt)
-            res["reasoning"] = f"Keyword-based fallback (JSON parse error: {e})"
+            res["tool_probability"] = tool_probability
+            if tool_probability < 0.2:
+                res["categories"] = ["CONVERSATIONAL_ONLY"]
+                res["reasoning"] = "Calibrated to conversational-only after fallback."
+            else:
+                res["reasoning"] = f"Keyword-based fallback (JSON parse error: {e})"
             return res
 
     def _keyword_fallback(self, prompt: str) -> dict:

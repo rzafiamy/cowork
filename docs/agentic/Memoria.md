@@ -1,6 +1,6 @@
 # 🧠 Memoria Framework - Complete Algorithm
 
-> **Hybrid Memory System**: Combining Supabase relational storage with AI Server Vector DB for semantic persona search with temporal decay.
+> **Current CLI Implementation**: Local SQLite knowledge graph + optional local embeddings/sqlite-vec with temporal decay and relevance gates.
 
 ---
 
@@ -19,20 +19,25 @@
 
 ## 🎯 Overview
 
-**Memoria** is a sophisticated memory system that enables AI agents to maintain long-term, personalized knowledge about users while providing context-aware responses. It combines:
+**Memoria** enables long-term, personalized context while keeping retrieval focused. Current behavior combines:
 
-- 🗄️ **Supabase**: Relational storage for triplets and session summaries
-- 🔍 **Vector DB**: Semantic search via AI Server's RAG system
-- ⏰ **Temporal Decay**: Exponentially Weighted Average (EWA) for recency bias
+- 🗄️ **SQLite**: Local storage for triplets and session summaries (`~/.cowork/memoria/memoria.db`)
+- 🔍 **Hybrid Retrieval**:
+  - `sqlite-vec` KNN when available
+  - local cosine scan fallback
+  - keyword overlap fallback
+- ⏰ **Temporal Decay**: Exponentially Weighted Average (EWA) recency weighting
 - 🧩 **Knowledge Graph**: Triplet-based (Subject-Predicate-Object) representation
+- 🎯 **Relevance Gates**: similarity + weight + topic overlap filtering
+- 🧱 **Selective Writes**: persist only durable user profile/preference/project-state turns
 
 ### 🎨 Key Features
 
-✅ **Hybrid Storage**: Best of both relational and vector databases  
-✅ **Semantic Search**: RAG-powered retrieval of relevant memories  
+✅ **Local-First Storage**: No external DB required  
+✅ **Semantic Search**: Local embeddings when available  
 ✅ **Temporal Awareness**: Recent memories weighted higher  
 ✅ **Session Continuity**: Rolling summaries of ongoing conversations  
-✅ **Scalable**: Efficient querying even with thousands of triplets  
+✅ **Relevance Discipline**: Topical filters reduce unrelated memory injection  
 
 ---
 
@@ -63,13 +68,13 @@ graph TB
     end
     
     subgraph "💾 Storage Layer"
-        K[(Supabase)]
-        L[Vector DB]
+        K[(SQLite: memoria.db)]
+        L[(sqlite-vec / local embeddings optional)]
     end
     
-    subgraph "🔧 External Services"
+    subgraph "🔧 Runtime Services"
         M[APIClient]
-        N[AuthService]
+        N[LLM Prompts]
     end
     
     A --> D
@@ -98,6 +103,27 @@ graph TB
     style K fill:#4dabf7,stroke:#1971c2,stroke-width:2px
     style L fill:#51cf66,stroke:#2f9e44,stroke-width:2px
     style H fill:#ffd43b,stroke:#f59f00,stroke-width:2px
+```
+
+### 🔒 Current Guardrails
+- Retrieval filters out low-similarity/low-weight facts.
+- Retrieval requires topic overlap unless similarity is very high.
+- Memory update is skipped for non-durable turns (generic one-off Q&A).
+
+### 📉 Current Retrieval + Write Gates (Diagram)
+
+```mermaid
+flowchart TD
+    A[User Turn] --> B{Durable user fact?}
+    B -- No --> C[Skip memory.update]
+    B -- Yes --> D[Extract triplets + update summary]
+
+    E[New Query] --> F[Load summary + candidate triplets]
+    F --> G{Similarity/weight above thresholds?}
+    G -- No --> H[Drop fact]
+    G -- Yes --> I{Topic overlap met OR high-sim bypass?}
+    I -- No --> H
+    I -- Yes --> J[Inject into fused memory context]
 ```
 
 ### 🗂️ Database Schema

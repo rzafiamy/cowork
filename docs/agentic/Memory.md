@@ -23,7 +23,7 @@ Standard LLMs fail on massive data due to:
 ---
 
 ## 🖇️ Context Optimization & Compression
-When the conversation gets "heavy," the **Context Compressor** utility (`ContextCompressor.js`) activates automatically.
+When the conversation gets "heavy," the **Context Compressor** utility (`ContextCompressor` in `cli/cowork/agent.py`) activates automatically.
 
 ### 1️⃣ Atomic Compression (Surge Protection)
 Identifies **"Heavy Nodes"**—single messages (e.g., a huge SQL output) occupying >75% of the window.
@@ -60,7 +60,7 @@ graph TD
 ```
 
 ### ✂️ Smart Chunking
-The `_smartChunk` utility identifies **semantic boundaries** (newlines, sentence ends) rather than cutting mid-word, ensuring context flows correctly through the Map phase.
+The `_smart_chunk` utility identifies **semantic boundaries** (newlines, sentence ends) rather than cutting mid-word, ensuring context flows correctly through the Map phase.
 
 ---
 

@@ -63,6 +63,12 @@ cowork run "Generate changelog draft" --model gpt-4o-mini
 cowork run "Plan migration tasks" --trace
 ```
 
+Runtime behavior notes:
+
+- Short conceptual turns may use an internal `CONVERSATIONAL_ONLY` fast-path (skips full router/tool-schema orchestration).
+- Goal status banners (`✅/⚠️/❌`) are reserved for step-limit self-assessment responses, not normal turns.
+- Memory persistence is selective: durable profile/preference/project-state turns are prioritized over generic one-off Q&A.
+
 ## 3. Session and State Commands
 
 ### `cowork sessions`
