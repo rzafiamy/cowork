@@ -55,6 +55,7 @@ from .theme import (
     TAGLINE,
     TELEMETRY_STEPS,
 )
+from .config import is_sensitive_key
 
 # ─── Console Singleton ────────────────────────────────────────────────────────
 console = Console(theme=COWORK_THEME, highlight=True)
@@ -354,9 +355,8 @@ def render_config(config_data: dict) -> None:
     table.add_column("Setting", style="highlight", min_width=30)
     table.add_column("Value", style="text")
 
-    sensitive_keys = {"api_key"}
     for key, value in sorted(config_data.items()):
-        if key in sensitive_keys:
+        if is_sensitive_key(key):
             display_val = "●●●●●●●●" if value else "[error]Not set[/error]"
         else:
             display_val = str(value)

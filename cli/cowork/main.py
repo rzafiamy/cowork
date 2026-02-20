@@ -30,7 +30,17 @@ from rich.rule import Rule
 
 from .agent import GeneralPurposeAgent
 from .api_client import APIClient, APIError
-from .config import CONFIG_DIR, AgentJob, AIProfileManager, ConfigManager, JobManager, Scratchpad, Session, TokenTracker
+from .config import (
+    CONFIG_DIR,
+    AgentJob,
+    AIProfileManager,
+    ConfigManager,
+    JobManager,
+    Scratchpad,
+    Session,
+    TokenTracker,
+    is_sensitive_key,
+)
 from .cron import CronManager
 from .memoria import Memoria
 from .workspace import WorkspaceSession, workspace_manager, WORKSPACE_ROOT
@@ -480,7 +490,8 @@ async def handle_command(
                 except (ValueError, AttributeError):
                     pass  # Keep as string
                 _config.set(key, value)
-                render_success(f"✅ Set {key} = {value}")
+                shown_value = "●●●●●●●●" if is_sensitive_key(key) and value else value
+                render_success(f"✅ Set {key} = {shown_value}")
             else:
                 render_error("Usage: /config set <key> <value>")
         else:
@@ -1158,7 +1169,8 @@ def config(set_values: tuple) -> None:
             except (ValueError, AttributeError):
                 pass
             _config.set(key, value)
-            render_success(f"Set {key} = {value}")
+            shown_value = "●●●●●●●●" if is_sensitive_key(key) and value else value
+            render_success(f"Set {key} = {shown_value}")
     else:
         render_config(_config.all())
 

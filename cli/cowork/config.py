@@ -99,12 +99,20 @@ SENSITIVE_KEYS = {
     "SMTP_PORT",
     "SMTP_USER",
     "SMTP_PASS",
+    "TELEGRAM_BOT_TOKEN",
+    "SLACK_BOT_TOKEN",
     # Multi-Modal service tokens
     "mm_vision_token",
     "mm_image_token",
     "mm_asr_token",
     "mm_tts_token",
 }
+_SENSITIVE_KEYS_CASEFOLD = {k.casefold() for k in SENSITIVE_KEYS}
+
+
+def is_sensitive_key(key: str) -> bool:
+    """Case-insensitive sensitive-key check used across config/display paths."""
+    return key.casefold() in _SENSITIVE_KEYS_CASEFOLD
 
 # ─── Config Manager ───────────────────────────────────────────────────────────
 class ConfigManager:
@@ -120,11 +128,13 @@ class ConfigManager:
             try:
                 with open(CONFIG_FILE) as f:
                     self._data = json.load(f)
-                
-                # 🛡️ CLEANUP: Immediately purge any sensitive keys that might have leaked into config.json
-                for k in SENSITIVE_KEYS:
-                    if k in self._data:
-                        del self._data[k]
+
+                # 🛡️ CLEANUP: Immediately purge and persist if sensitive keys leaked into config.json
+                had_sensitive = any(is_sensitive_key(k) for k in self._data)
+                if had_sensitive:
+                    self._data = {k: v for k, v in self._data.items() if not is_sensitive_key(k)}
+                    with open(CONFIG_FILE, "w") as f:
+                        json.dump(self._data, f, indent=2)
                         
             except (json.JSONDecodeError, OSError):
                 self._data = {}
@@ -159,7 +169,7 @@ class ConfigManager:
     def save(self) -> None:
         """Saves configuration to disk, filtering out sensitive credentials."""
         # 🛡️ Filter sensitive keys before writing to file
-        safe_data = {k: v for k, v in self._data.items() if k not in SENSITIVE_KEYS}
+        safe_data = {k: v for k, v in self._data.items() if not is_sensitive_key(k)}
         
         with open(CONFIG_FILE, "w") as f:
             json.dump(safe_data, f, indent=2)
