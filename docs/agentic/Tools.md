@@ -23,6 +23,16 @@ The agent does not simply receive a static list of tools. Instead, the available
 3.  **⚡ User Actions (`ActionService.js`)**:
     *   Custom scripts or workflows defined by users (Future Extensibility).
 
+### Coding Group (Current)
+The platform now uses `CODING_TOOLS` as the unified category for both code research (e.g., GitHub) and project implementation tasks (web, Python, backend/frontend work) within the local project root.
+
+Tools:
+- `codebase_list_files`
+- `codebase_read_file`
+- `codebase_search_text`
+- `codebase_grep`
+- `codebase_write_file`
+
 ---
 
 ## 3. 🚦 Schema Construction & Filtering
@@ -95,6 +105,21 @@ If a tool result exceeds the token limit:
 4.  **Return**: Returns the **Preview** + **Pointer (`ref:tool_output_search_999`)** to the LLM.
 
 **Benefit for Architect**: The LLM "knows" it has the data (via the preview) and can reference it in future calls (via the key), but the context window remains unpolluted.
+
+### 5.3 Step-Intersection Tool Assessment (Current)
+To improve reasoning quality between REACT steps, tool outputs are assessed immediately after execution.
+
+For each tool result, the agent derives:
+- `tool`: tool name
+- `status`: `ok`, `partial`, `error`, or `blocked`
+- `finding`: compact evidence snippet
+- `next_action`: explicit suggested next move
+
+Then the agent:
+1. Appends a structured `[TOOL REFLECTION]` note into the live message list for the next LLM call.
+2. Persists a rolling `run_step_ledger` record to scratchpad for in-run continuity and debugging.
+
+This gives the model a compact and explicit "what just happened" state, instead of forcing it to infer everything from raw tool payloads.
 
 ---
 

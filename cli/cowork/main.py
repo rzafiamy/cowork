@@ -38,8 +38,8 @@ from .tools import get_all_available_tools
 from .tracing import (
     WorkflowTraceLogger,
     find_latest_trace_file,
-    format_trace_text,
     load_trace_events,
+    render_trace_timeline,
 )
 from .ui import (
     ThinkingSpinner,
@@ -100,6 +100,7 @@ async def run_agent_turn(
     api_client: APIClient,
     scratchpad: Scratchpad,
     memoria: Memoria,
+    action_mode: Optional[dict] = None,
     show_routing: bool = True,
     unattended: bool = False,
     trace_enabled: bool = False,
@@ -199,7 +200,7 @@ async def run_agent_turn(
         agent.router.classify = patched_classify
         agent.confirm_cb = on_confirm
 
-        response = await agent.run(user_input, session, job)
+        response = await agent.run(user_input, session, job, action_mode=action_mode)
         elapsed = time.time() - start_time
 
         if not unattended:
@@ -589,8 +590,14 @@ async def handle_command(
                 elif sub == "raw":
                     console.print(Syntax("\n".join(json.dumps(e, ensure_ascii=False) for e in events), "json", theme="monokai", background_color="default"))
                 else:
-                    txt = format_trace_text(events, full=True, max_value_chars=12000)
-                    console.print(Panel.fit(txt, title=f"🧾 Full Trace ({p.name})", border_style="primary"))
+                    console.print(
+                        render_trace_timeline(
+                            events,
+                            full=True,
+                            max_value_chars=12000,
+                            trace_file=str(p),
+                        )
+                    )
             return True, None, needs_rebuild
 
         if _last_job:
@@ -918,6 +925,8 @@ async def interactive_loop(
             action_mode = {"categories": ["CRON_TOOLS"], "pill": "#cron"}
         elif "#email" in user_input.lower() or "#comms" in user_input.lower():
             action_mode = {"categories": ["COMMUNICATION_TOOLS"], "pill": "#email"}
+        elif "#coding" in user_input.lower() or "#code" in user_input.lower() or "#web" in user_input.lower():
+            action_mode = {"categories": ["CODING_TOOLS", "WORKSPACE_TOOLS"], "pill": "#coding"}
 
         if action_mode:
             console.print(f"  [accent]⚡ Action Pill detected: {action_mode['pill']}[/accent]")
@@ -932,6 +941,7 @@ async def interactive_loop(
             api_client=api_client,
             scratchpad=scratchpad,
             memoria=_memoria,
+            action_mode=action_mode,
             show_routing=True,
             trace_enabled=trace_enabled,
         )
@@ -1211,8 +1221,14 @@ def trace(trace_file: Optional[Path], session_id: Optional[str], raw: bool, full
         raw_jsonl = "\n".join(json.dumps(e, ensure_ascii=False) for e in events)
         console.print(Syntax(raw_jsonl, "json", theme="monokai", background_color="default"))
     else:
-        text = format_trace_text(events, full=full, max_value_chars=20000)
-        console.print(Panel.fit(text, title="🧾 Readable Trace", border_style="primary"))
+        console.print(
+            render_trace_timeline(
+                events,
+                full=full,
+                max_value_chars=20000,
+                trace_file=str(target),
+            )
+        )
 
 
 @cli.command()

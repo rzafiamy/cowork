@@ -105,7 +105,7 @@ CATEGORY_STYLES = {
     "SEARCH_TOOLS":           ("[router]🔍 SEARCH_TOOLS[/router]",             "#60A5FA"),
     "WEB_TOOLS":              ("[secondary]🌐 WEB_TOOLS[/secondary]",           "#06B6D4"),
     "NEWS_TOOLS":             ("[accent]📰 NEWS_TOOLS[/accent]",              "#F59E0B"),
-    "CODE_TOOLS":             ("[highlight]💻 CODE_TOOLS[/highlight]",          "#818CF8"),
+    "CODING_TOOLS":             ("[highlight]💻 CODING_TOOLS[/highlight]",          "#818CF8"),
     "WEATHER_TOOLS":          ("[secondary]🌤️  WEATHER_TOOLS[/secondary]",       "#06B6D4"),
     "MEDIA_TOOLS":            ("[accent]🎬 MEDIA_TOOLS[/accent]",              "#F59E0B"),
     "KNOWLEDGE_TOOLS":        ("[router]📖 KNOWLEDGE_TOOLS[/router]",           "#60A5FA"),

@@ -45,6 +45,8 @@ class MetaRouter:
             "scrape", "crawl", "send", "email", "post", "tweet",
             "create", "generate", "build", "write file", "save", "store",
             "schedule", "book", "calendar", "weather", "news", "price",
+            "website", "landing page", "frontend", "backend", "ui", "ux",
+            "code", "coding", "#coding", "#code", "#web",
         ]
         has_action = any(t in p for t in action_terms)
         long_turn = len(prompt) > 180
@@ -196,7 +198,13 @@ class MetaRouter:
         if any(w in p for w in ["news", "headlines", "breaking news", "newsapi", "latest news"]):
             categories.extend(["NEWS_TOOLS", "SEARCH_TOOLS"])
         if any(w in p for w in ["github", "repository", "open source", "code search", "pull request", "issue"]):
-            categories.append("CODE_TOOLS")
+            categories.append("CODING_TOOLS")
+        if any(w in p for w in [
+            "codebase", "source code", "refactor", "debug", "bug fix", "implement", "write code",
+            "python", "javascript", "typescript", "react", "next.js", "django", "flask",
+            "fastapi", "frontend", "backend", "api endpoint", "unit test", "web app",
+        ]):
+            categories.append("CODING_TOOLS")
         if any(w in p for w in ["weather", "forecast", "temperature", "humidity", "openweather", "rain", "snow", "wind"]):
             categories.append("WEATHER_TOOLS")
         if any(w in p for w in ["movie", "film", "tv show", "series", "tmdb", "cast", "director", "imdb", "actor", "actress"]):
@@ -232,6 +240,8 @@ class MetaRouter:
                 categories.append("SESSION_SCRATCHPAD")
             if any(w in p for w in ["workspace", "artifact", "write file", "save file", "session note", "context.md"]):
                 categories.append("WORKSPACE_TOOLS")
+            if any(w in p for w in ["code", "function", "class", "module", "repo", "project file"]):
+                categories.append("CODING_TOOLS")
             if any(w in p for w in ["note", "task", "kanban", "calendar", "event", "file", "write"]):
                 categories.append("APP_CONNECTORS")
             if any(w in p for w in ["cron", "schedule", "remind me", "every day", "daily", "weekly", "tomorrow at"]):

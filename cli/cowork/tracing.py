@@ -182,3 +182,162 @@ def format_trace_text(
             lines.append(f"    keys: {', '.join(keys) if keys else '(none)'}")
         lines.append("")
     return "\n".join(lines)
+
+
+def _event_theme(event: str) -> tuple[str, str]:
+    """Return (icon, style) for an event name."""
+    if event.startswith("trace_"):
+        return "🧾", "primary"
+    if event.startswith("turn_"):
+        return "🧠", "secondary"
+    if event.startswith("router_"):
+        return "🧭", "router"
+    if event.startswith("memory_"):
+        return "🧠", "memory"
+    if event.startswith("tool_"):
+        return "🛠️", "tool"
+    if event.startswith("llm_"):
+        return "🤖", "highlight"
+    if event.startswith("context_compression"):
+        return "🗜️", "compress"
+    if "error" in event:
+        return "❌", "error"
+    if event == "final_answer":
+        return "✅", "success"
+    return "•", "muted"
+
+
+def _shorten(value: Any, max_chars: int) -> str:
+    if isinstance(value, (dict, list)):
+        txt = json.dumps(value, ensure_ascii=False)
+    else:
+        txt = str(value)
+    if len(txt) <= max_chars:
+        return txt
+    return txt[:max_chars] + "…"
+
+
+def render_trace_timeline(
+    events: list[dict[str, Any]],
+    *,
+    full: bool = False,
+    max_value_chars: int = 4000,
+    trace_file: Optional[str] = None,
+):
+    """
+    Build a rich, colorized trace timeline renderable.
+    Keeps output readable for long traces while preserving inspectability.
+    """
+    from rich import box
+    from rich.console import Group
+    from rich.panel import Panel
+    from rich.syntax import Syntax
+    from rich.table import Table
+    from rich.text import Text
+
+    total_events = len(events)
+    total_ms = max((int(e.get("elapsed_ms", 0)) for e in events), default=0)
+
+    by_family: dict[str, int] = {
+        "turn": 0,
+        "router": 0,
+        "llm": 0,
+        "tool": 0,
+        "memory": 0,
+        "trace": 0,
+        "other": 0,
+    }
+    for e in events:
+        name = str(e.get("event", "unknown"))
+        if name.startswith("turn_"):
+            by_family["turn"] += 1
+        elif name.startswith("router_"):
+            by_family["router"] += 1
+        elif name.startswith("llm_"):
+            by_family["llm"] += 1
+        elif name.startswith("tool_"):
+            by_family["tool"] += 1
+        elif name.startswith("memory_"):
+            by_family["memory"] += 1
+        elif name.startswith("trace_"):
+            by_family["trace"] += 1
+        else:
+            by_family["other"] += 1
+
+    summary = Table.grid(padding=(0, 2))
+    summary.add_column(style="muted", justify="right")
+    summary.add_column()
+    summary.add_row("Events", f"[highlight]{total_events}[/highlight]")
+    summary.add_row("Elapsed", f"[highlight]{total_ms} ms[/highlight]")
+    if trace_file:
+        summary.add_row("Trace File", f"[dim_text]{trace_file}[/dim_text]")
+    summary.add_row(
+        "Families",
+        (
+            f"[secondary]turn {by_family['turn']}[/secondary] · "
+            f"[router]router {by_family['router']}[/router] · "
+            f"[highlight]llm {by_family['llm']}[/highlight] · "
+            f"[tool]tool {by_family['tool']}[/tool] · "
+            f"[memory]memory {by_family['memory']}[/memory]"
+        ),
+    )
+
+    header = Panel(summary, title="🧾 Trace Summary", border_style="primary", padding=(0, 1))
+
+    event_panels = []
+    for idx, e in enumerate(events, start=1):
+        event = str(e.get("event", "unknown"))
+        elapsed = int(e.get("elapsed_ms", 0))
+        ts = str(e.get("timestamp", ""))
+        data = e.get("data", {})
+        icon, style = _event_theme(event)
+
+        meta = Table.grid(padding=(0, 2))
+        meta.add_column(style="muted")
+        meta.add_column()
+        meta.add_row("Time", ts or "(unknown)")
+        meta.add_row("Elapsed", f"+{elapsed}ms")
+
+        renderables = [meta]
+        if full:
+            if isinstance(data, dict) and data:
+                kv = Table(box=box.MINIMAL, show_header=True, header_style="bold", expand=True)
+                kv.add_column("Key", style="accent", no_wrap=True, width=28)
+                kv.add_column("Value", style="text")
+                for k, v in data.items():
+                    if isinstance(v, (dict, list)):
+                        shown = _shorten(v, min(max_value_chars, 2000))
+                    else:
+                        shown = _shorten(v, min(max_value_chars, 1200))
+                    kv.add_row(str(k), shown)
+                renderables.append(kv)
+
+                raw_json = json.dumps(data, indent=2, ensure_ascii=False)
+                if len(raw_json) > max_value_chars:
+                    raw_json = raw_json[:max_value_chars] + "\n... [truncated]"
+                renderables.append(
+                    Panel(
+                        Syntax(raw_json, "json", theme="monokai", background_color="default"),
+                        title="Raw Payload",
+                        border_style="dim",
+                        padding=(0, 1),
+                    )
+                )
+            else:
+                renderables.append(Text("No payload data.", style="dim"))
+        else:
+            keys = list(data.keys())[:10] if isinstance(data, dict) else []
+            key_text = ", ".join(keys) if keys else "(none)"
+            renderables.append(Text(f"Keys: {key_text}", style="dim"))
+
+        event_panels.append(
+            Panel(
+                Group(*renderables),
+                title=f"{icon} [{style}]#{idx} {event}[/{style}]",
+                border_style=style,
+                padding=(0, 1),
+                expand=True,
+            )
+        )
+
+    return Group(header, *event_panels)

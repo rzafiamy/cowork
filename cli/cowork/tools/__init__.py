@@ -23,6 +23,13 @@ from .builtin.workspace import (
     WorkspaceContextUpdateTool, 
     WorkspaceSearchTool
 )
+from .builtin.coding import (
+    CodebaseListFilesTool,
+    CodebaseReadFileTool,
+    CodebaseSearchTextTool,
+    CodebaseWriteFileTool,
+    CodebaseGrepTool,
+)
 from .builtin.cron import (
     CronScheduleTool, 
     CronListTool, 
@@ -64,6 +71,11 @@ def _register_builtin():
     registry.register(WorkspaceNoteTool)
     registry.register(WorkspaceContextUpdateTool)
     registry.register(WorkspaceSearchTool)
+    registry.register(CodebaseListFilesTool)
+    registry.register(CodebaseReadFileTool)
+    registry.register(CodebaseSearchTextTool)
+    registry.register(CodebaseWriteFileTool)
+    registry.register(CodebaseGrepTool)
     registry.register(CronScheduleTool)
     registry.register(CronListTool)
     registry.register(CronDeleteTool)

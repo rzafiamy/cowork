@@ -33,7 +33,7 @@ def github_search(
 
 TOOLS = [
     {
-        "category": "CODE_TOOLS",
+        "category": "CODING_TOOLS",
         "type": "function",
         "function": {
             "name": "github_search",

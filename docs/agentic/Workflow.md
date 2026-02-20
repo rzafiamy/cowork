@@ -46,6 +46,19 @@ This document traces the path of a user request from the moment it leaves the ke
     *   Inlines conversation summaries if the window is cramped.
 4.  **⚙️ Multi-Action**: Executes tools (Parallelized when possible).
 5.  **🥪 Output Guard**: Large tool results are "Sandwiched" before returning to the loop.
+6.  **🧾 Step Intersection Reflection (Critical)**:
+    *   After each tool batch, the agent creates a compact structured assessment per tool:
+        * `tool`
+        * `status` (`ok` / `partial` / `error` / `blocked`)
+        * `finding`
+        * `next_action`
+    *   The assessment is injected as a `[TOOL REFLECTION]` system note before the next LLM step.
+    *   A rolling `run_step_ledger` is persisted in scratchpad for continuity during the same run.
+
+### 🧠 Why This Phase Matters
+- The next reasoning step should not rely on raw tool text alone.
+- Structured reflection provides a stable "state transition" between steps.
+- This reduces repeated tool loops and improves tool-to-tool planning quality.
 
 ## 🟠 Phase 5: Rendering & Finalization
 *Components: `cli/cowork/ui.py` ⮕ `cli/cowork/api_client.py` ⮕ `cli/cowork/config.py` (`Session`)*
@@ -71,73 +84,71 @@ This document traces the path of a user request from the moment it leaves the ke
 ```mermaid
 sequenceDiagram
     autonumber
-    participant User as 👤 User
-    participant CM as 📑 ChatManager
-    participant JobMgr as 🚦 Agent Job Queue
-    participant Agent as 🤖 General Agent
-    participant Comp as 🖇️ Context Comp
-    participant Router as 🧭 Meta-Router
-    participant API as 📡 API Client
-    participant UI as 💻 Chat UI
+    participant User as User
+    participant CM as ChatManager
+    participant JobMgr as AgentJobQueue
+    participant Agent as GeneralAgent
+    participant Comp as ContextCompressor
+    participant Router as MetaRouter
+    participant API as APIClient
+    participant UI as ChatUI
 
-    User->>CM: Sends message
-    
-    CM->>CM: 🛡️ Gatekeeper check
+    User->>CM: Send message
+
+    CM->>CM: Gatekeeper check
     alt Input > Limit
-        CM->>CM: 📝 Offload to Scratchpad
+        CM->>CM: Offload input to scratchpad
     end
-    
-    CM->>JobMgr: 🚦 startJob()
-    JobMgr->>JobMgr: 💾 Persist job state (jobs.json)
-    
-    JobMgr->>Agent: 🏃 run()
-    
+
+    CM->>JobMgr: startJob()
+    JobMgr->>JobMgr: Persist job state
+
+    JobMgr->>Agent: run()
+
     alt Action Mode
-        Agent->>Agent: ⚡ Inject Strict Intent
+        Agent->>Agent: Use predefined categories
     else Fast Conversational Path
-        Agent->>Agent: 💭 Route = CONVERSATIONAL_ONLY
-        Agent->>Agent: 🧩 Use Chat Prompt + No Tools Schema
+        Agent->>Agent: Route to CONVERSATIONAL_ONLY
+        Agent->>Agent: Use chat prompt without tools
     else Standard Mode
-        Agent->>Router: 🧭 _classifyRequest (T=0.0 + tool probability)
-        Router-->>Agent: 🛠️ Relevant Tools
+        Agent->>Router: classify request
+        Router-->>Agent: return categories/tools
     end
-    
+
     loop REACT Loop
-        Agent->>Comp: 🖇️ optimizeContext()
+        Agent->>Comp: optimizeContext()
         alt Buffer low
-            Comp->>API: 📉 Map-Reduce (T=0.1)
+            Comp->>API: map-reduce summarize history
             API-->>Comp: Summary
         end
-        
-        Agent->>API: 📡 sendMessageStream (T=0.4)
+
+        Agent->>API: chat completion
         activate API
         loop Streaming
-            API-->>UI: 🌊 onChunk()
+            API-->>UI: onChunk()
         end
         API-->>Agent: Result
         deactivate API
-        
+
         alt Tool Use
-            Agent->>Agent: ⚙️ Execute Tools
+            Agent->>Agent: Execute tool calls
             alt Output Large
-                Agent->>Comp: 🥪 sandwichPreview()
+                Agent->>Comp: clamp and preview output
             end
         end
     end
-    
-    Agent-->>JobMgr: ✅ Job Complete
+
+    Agent-->>JobMgr: Job complete
     JobMgr->>CM: onComplete(result)
-    CM->>UI: 🔔 Render Final Response
-    
-    Note over CM,Agent: 🚀 Background Persistence Phase
-    par Background Tasks
-        CM->>CM: 💾 addMessage(trace, answer)
-        CM->>CM: 📝 autoGenerateTitleIfUnnamed()
-        alt Durable user message
-            Agent->>Agent: 🧠 memory.update()
-        else Non-durable one-off turn
-            Agent->>Agent: ⏭️ Skip memory update
-        end
+    CM->>UI: Render final response
+
+    Note over CM,Agent: Background persistence phase
+    CM->>CM: addMessage(user/assistant)
+    CM->>CM: autoGenerateTitleIfUnnamed()
+    alt Durable user message
+        Agent->>Agent: memory.update()
+    else Non-durable one-off turn
+        Agent->>Agent: skip memory update
     end
 ```
 

@@ -159,7 +159,7 @@ ROUTER_CATEGORY_DESCRIPTIONS = {
     "WEB_TOOLS": "Scrape or read a specific URL (Firecrawl)",
     "WEATHER_TOOLS": "Current weather and forecasts (OpenWeatherMap)",
     "NEWS_TOOLS": "News headlines and article search (NewsAPI)",
-    "CODE_TOOLS": "GitHub repositories, code, issues",
+    "CODING_TOOLS": "Coding purpose tool (list/read/search/grep/write/github) for web/python/dev tasks",
     "MEDIA_AND_ENTERTAINMENT": "General images, movies, media",
     "MEDIA_TOOLS": "Detailed movie/TV info — cast, ratings, plot (TMDB)",
     "COMMUNICATION_TOOLS": "Email (SMTP), Telegram, Slack, X/Twitter",

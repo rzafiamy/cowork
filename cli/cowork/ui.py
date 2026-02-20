@@ -823,7 +823,7 @@ def render_help() -> None:
     pills.add_column()
     pills.add_row("[accent]⚡ Action Pills[/accent]")
     pills.add_row("[dim_text]Type a message naturally or use /commands[/dim_text]")
-    pills.add_row("[dim_text]Hashtags like #research or #task route your intent[/dim_text]")
+    pills.add_row("[dim_text]Hashtags like #research, #task, or #coding route your intent[/dim_text]")
 
     console.print(Panel(
         Group(table, Rule(style="muted"), pills),
@@ -929,6 +929,9 @@ HASHTAG_PILLS: list[tuple[str, str]] = [
     ("#kanban",    "Route to Kanban board"),
     ("#calc",      "Route to math and calculation tools"),
     ("#math",      "Route to math and calculation tools"),
+    ("#coding",    "Route to code tools (web/python/dev)"),
+    ("#code",      "Route to code tools (web/python/dev)"),
+    ("#web",       "Route to code tools (web/python/dev)"),
     ("#note",      "Route to notes and workspace tools"),
     ("#workspace", "Route to workspace file tools"),
 ]

@@ -240,7 +240,8 @@ class GeneralPurposeAgent:
             "search", "find", "look up", "latest", "today", "current", "news",
             "weather", "price", "stock", "scrape", "crawl", "fetch", "download",
             "send", "email", "post", "publish", "save", "store", "schedule",
-            "book", "create file", "write file",
+            "book", "create file", "write file", "build", "develop", "implement",
+            "website", "landing page", "frontend", "backend", "#coding", "#code",
         ]
         if any(v in t for v in action_verbs):
             return False
@@ -299,6 +300,70 @@ class GeneralPurposeAgent:
             return "\n".join(lines)
         except Exception:
             return "(scratchpad unavailable)"
+
+    def _assess_tool_result(self, tool_name: str, result: str) -> dict[str, str]:
+        """
+        Produce a compact, model-friendly assessment for a tool output.
+        This is injected back into the loop so the next step reasons from
+        distilled findings instead of only raw tool text.
+        """
+        text = (result or "").strip()
+        lowered = text.lower()
+
+        if text.startswith(TOOL_ERROR_PREFIX):
+            status = "error"
+            next_action = "Use an alternative tool or fix arguments and retry."
+        elif text.startswith(GATEWAY_ERROR_PREFIX):
+            status = "error"
+            next_action = "Repair tool-call schema/refs and retry."
+        elif "[FIREWALL BLOCK]" in text or "[FIREWALL CANCEL]" in text:
+            status = "blocked"
+            next_action = "Ask user confirmation or choose a safer alternative."
+        else:
+            status = "ok"
+            next_action = "Proceed with synthesis or call next required tool."
+
+        # Extract compact evidence snippets from non-empty, non-decorative lines.
+        snippets: list[str] = []
+        for line in text.splitlines():
+            ln = line.strip()
+            if not ln:
+                continue
+            if ln.startswith("•"):
+                ln = ln[1:].strip()
+            if ln.startswith("✅") or ln.startswith("❌") or ln.startswith("⚠️") or ln.startswith("🛡️"):
+                ln = ln[1:].strip()
+            if ln and not ln.startswith("[") and len(ln) > 2:
+                snippets.append(ln)
+            if len(snippets) >= 2:
+                break
+
+        finding = " | ".join(snippets)[:260] if snippets else (text[:260] if text else "No output.")
+        if "not found" in lowered and status == "ok":
+            status = "partial"
+            next_action = "Validate input/query and retry with adjusted parameters."
+
+        return {
+            "tool": tool_name,
+            "status": status,
+            "finding": finding,
+            "next_action": next_action,
+        }
+
+    def _build_tool_reflection_note(self, step: int, assessments: list[dict[str, str]]) -> str:
+        """
+        Build a compact structured note for the next LLM step.
+        """
+        lines = [
+            "[TOOL REFLECTION]",
+            f"Step: {step}",
+            "Use this to continue reasoning from validated tool outcomes.",
+        ]
+        for i, a in enumerate(assessments, start=1):
+            lines.append(
+                f"{i}. tool={a['tool']}; status={a['status']}; finding={a['finding']}; next={a['next_action']}"
+            )
+        return "\n".join(lines)[:1800]
 
     # ── Input Gatekeeper ──────────────────────────────────────────────────────
 
@@ -468,6 +533,7 @@ class GeneralPurposeAgent:
         # ── Phase 3: REACT Loop ───────────────────────────────────────────────
         self.status_cb("🤖  Phase 3 · REACT Execution Loop...")
         final_response = ""
+        step_ledger: list[dict[str, Any]] = []
 
         last_tool_hash = None
         repeat_count = 0
@@ -671,6 +737,41 @@ class GeneralPurposeAgent:
                 messages.extend(tool_results)
                 total_tool_calls += len(calls_this_step)
                 trace.total_tool_calls = total_tool_calls
+
+                # Build compact tool assessments for the next reasoning step.
+                assessments: list[dict[str, str]] = []
+                for tc, tr in zip(calls_this_step, tool_results):
+                    tool_name = tc.get("function", {}).get("name", "unknown_tool")
+                    tool_text = tr.get("content", "")
+                    assessments.append(self._assess_tool_result(tool_name, tool_text))
+
+                reflection_note = self._build_tool_reflection_note(step + 1, assessments)
+                messages.append({"role": "system", "content": reflection_note})
+                self.trace_cb(
+                    "tool_reflection_note",
+                    {
+                        "step": step + 1,
+                        "assessments": assessments,
+                        "note": reflection_note,
+                    },
+                )
+
+                # Keep a rolling run ledger in scratchpad for continuity/debug.
+                step_ledger.append(
+                    {
+                        "step": step + 1,
+                        "assessments": assessments,
+                        "tool_calls": [tc.get("function", {}).get("name", "") for tc in calls_this_step],
+                    }
+                )
+                try:
+                    self.scratchpad.save(
+                        "run_step_ledger",
+                        json.dumps(step_ledger[-12:], ensure_ascii=False, indent=2),
+                        description="Rolling tool-step assessments for current run",
+                    )
+                except Exception:
+                    pass
                 continue  # Loop back for next reasoning step
 
             # ── No more tool calls — we have a final answer ───────────────────

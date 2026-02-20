@@ -113,8 +113,8 @@ Prefix your message with a hashtag to **fast-track routing** and bypass the Meta
 | `#research` | SEARCH_AND_INFO | `#research latest AI benchmarks` |
 | `#task` | APP_CONNECTORS | `#task add review PR to kanban` |
 | `#calc` | DATA_AND_UTILITY | `#calc compound interest at 5% for 10 years` |
+| `#coding` | CODING_TOOLS + WORKSPACE_TOOLS | `#coding build my freelancer AI landing page` |
 | `#note` | APP_CONNECTORS | `#note meeting summary: decided on Python` |
-| `#doc` | DOCUMENT_TOOLS | `#doc create Q1 report as PDF` |
 
 Additionally, Cowork has an internal **conversational fast-path** for short conceptual Q&A.  
 When triggered, it skips full router + tool schema setup and uses a compact chat system prompt.
@@ -129,6 +129,7 @@ When triggered, it skips full router + tool schema setup and uses a compact chat
 |----------|-----------|
 | 📝 SESSION_SCRATCHPAD | `scratchpad_save`, `scratchpad_list`, `scratchpad_read_chunk`, `scratchpad_search`, `scratchpad_update_goal` |
 | 📊 DATA_AND_UTILITY | `calc`, `get_time`, `gen_diagram` |
+| 💻 CODING_TOOLS | `github_search`, `codebase_list_files`, `codebase_read_file`, `codebase_search_text`, `codebase_grep`, `codebase_write_file` |
 | 🔌 APP_CONNECTORS | `notes_create`, `kanban_add_task`, `storage_write`, `get_weather` |
 | 📁 WORKSPACE_TOOLS | `workspace_write`, `workspace_read`, `workspace_list`, `workspace_note`, `workspace_context_update`, `workspace_search` |
 | 📄 DOCUMENT_TOOLS | `document_create_pdf`, `document_create_pptx`, `document_create_xlsx`, `document_create_docx` |
@@ -143,11 +144,26 @@ When triggered, it skips full router + tool schema setup and uses a compact chat
 | 🔗 WEB_TOOLS | `scrape_url` | `FIRECRAWL_API_KEY` |
 | ☁️ WEATHER_TOOLS | `get_weather` | `OPENWEATHERMAP_API_KEY` |
 | 📰 NEWS_TOOLS | `news_search` | `NEWS_API_KEY` |
-| 💻 CODE_TOOLS | `github_search`, `github_repo` | `GITHUB_TOKEN` |
+| 💻 CODING_TOOLS (external subset) | `github_search` | `GITHUB_TOKEN` |
 | 💬 COMMUNICATION_TOOLS | `smtp_send_email` *(+ attachments, HTML)*, `telegram_send_message`, `slack_send_message`, `twitter_post_tweet` | `SMTP_*`, `TELEGRAM_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `TWITTER_BEARER_TOKEN` |
 | 📅 GOOGLE_TOOLS | `google_calendar_events`, `google_calendar_create_event`, `google_drive_search`, `google_drive_upload_text`, `gmail_send_email` *(+ attachments, HTML)* | `google_credentials.json` |
 | 🎞️ MEDIA_TOOLS | `tmdb_search_movie` | `TMDB_API_KEY` |
 | 👁️ VISION | `analyze_image` | *(uses model endpoint)* |
+
+---
+
+### Code Output Root
+
+`codebase_*` tools write inside a dedicated Cowork area by default:
+
+- Session-backed: `~/.cowork/workspace/<session-slug>/artifacts/codebase/`
+- Fallback: `~/.cowork/workspace/_coding/artifacts/codebase/`
+
+Override only if needed:
+
+```bash
+export COWORK_PROJECT_ROOT=/absolute/path
+```
 
 ---
 

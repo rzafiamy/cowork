@@ -25,6 +25,7 @@ To prevent "Tool Fatigue" and context noise, we implement a **Dynamic Schema** s
 - 📊 **`DATA_AND_UTILITY`**: Math, Charting, Diagrams, and Time.
 - 🧠 **`SESSION_SCRATCHPAD`**: Temporary "Work-RAM" for processing large data within a session. Volatile.
 - 🔌 **`APP_CONNECTORS`**: Persistent productivity ecosystem integrations (Notes, Kanban, Calendar, Storage, etc.) for long-term workspace records.
+- 💻 **`CODING_TOOLS`**: Unified code tools for GitHub/code research and project-root operations (list/read/search/grep/write).
 - 💭 **`CONVERSATIONAL_ONLY`**: Minimal orchestration path for direct answers with no tools schema.
 
 ### 🛠️ Available Tools by Category
@@ -74,6 +75,26 @@ When a user clicks a **Workflow Pill** or triggers a command:
 1.  **⏩ Router Bypass**: Intent is already known; we skip classification to save ~1.5s.
 2.  **🔒 Strict Tooling**: The Agent is locked to the specific toolset defined for that Action.
 3.  **💉 Instruction Injection**: Custom workflow instructions are fused directly into the system prompt.
+
+---
+
+## 🔁 Step-Intersection Reasoning (Tool -> Reflection -> Next Inference)
+Inside the REACT loop, the critical reasoning transition is:
+1. LLM emits tool calls.
+2. Tools execute and return outputs.
+3. Agent generates a compact structured reflection from tool outcomes.
+4. Reflection is appended to messages.
+5. LLM performs next-step reasoning from both raw results and structured state.
+
+Current reflection schema:
+- `tool`
+- `status` (`ok` / `partial` / `error` / `blocked`)
+- `finding`
+- `next_action`
+
+Operational persistence:
+- A rolling `run_step_ledger` is saved to scratchpad during the run.
+- This acts as short-term execution memory and supports continuity if context gets dense.
 
 ---
 
