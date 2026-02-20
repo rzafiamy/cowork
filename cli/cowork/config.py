@@ -7,6 +7,7 @@ import json
 import os
 import re
 import uuid
+import fnmatch
 import yaml
 from datetime import datetime
 from pathlib import Path
@@ -778,7 +779,15 @@ class FirewallManager:
             with open(self.path, "r") as f:
                 self._rules = yaml.safe_load(f) or {}
         except Exception:
-            self._rules = {"policy": {"default_action": "allow"}}
+            # Fail-closed on invalid firewall config
+            self._rules = {"policy": {"default_action": "ask"}}
+
+    def _normalize_action(self, action: Any) -> str:
+        """Normalize firewall action; unknown values fail-closed to 'ask'."""
+        a = str(action or "").strip().lower()
+        if a in {FirewallAction.ALLOW, FirewallAction.BLOCK, FirewallAction.ASK, FirewallAction.ANALYZE}:
+            return a
+        return FirewallAction.ASK
 
     def _create_default(self) -> None:
         """Initialize firewall.yaml with safe defaults."""
@@ -872,7 +881,12 @@ analyze: []
         # 3. Check specific tool rules
         tool_rules = self._rules.get("tools", [])
         for rule in tool_rules:
-            if rule.get("name") == tool_name:
+            rule_name = str(rule.get("name", "")).strip()
+            if not rule_name:
+                continue
+            # Match exact name or wildcard pattern (e.g. "smtp_*", "*_send_*")
+            matches = (rule_name == tool_name) or fnmatch.fnmatch(tool_name, rule_name)
+            if matches:
                 # Check argument rules if defined
                 arg_rules = rule.get("rules", [])
                 for arg_rule in arg_rules:
@@ -881,19 +895,19 @@ analyze: []
                     if field in args and pattern:
                         try:
                             if re.search(pattern, str(args[field])):
-                                action = arg_rule.get("action", rule.get("action", FirewallAction.ALLOW))
+                                action = self._normalize_action(arg_rule.get("action", rule.get("action", FirewallAction.ASK)))
                                 reason = arg_rule.get("description", rule.get("description", f"Rule for {tool_name}"))
                                 return action, reason
                         except Exception as e:
                             # If regex is invalid, we skip this rule or could block for safety
                             pass
 
-                action = rule.get("action", FirewallAction.ALLOW)
+                action = self._normalize_action(rule.get("action", FirewallAction.ASK))
                 reason = rule.get("description", f"Rule for {tool_name}")
                 return action, reason
 
         # 4. Fallback to default policy
-        default_action = self._rules.get("policy", {}).get("default_action", FirewallAction.ALLOW)
+        default_action = self._normalize_action(self._rules.get("policy", {}).get("default_action", FirewallAction.ASK))
         return default_action, "Default policy"
 
     def reload(self) -> None:

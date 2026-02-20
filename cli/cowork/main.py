@@ -30,7 +30,7 @@ from rich.rule import Rule
 
 from .agent import GeneralPurposeAgent
 from .api_client import APIClient, APIError
-from .config import AgentJob, AIProfileManager, ConfigManager, JobManager, Scratchpad, Session, TokenTracker
+from .config import CONFIG_DIR, AgentJob, AIProfileManager, ConfigManager, JobManager, Scratchpad, Session, TokenTracker
 from .cron import CronManager
 from .memoria import Memoria
 from .workspace import WorkspaceSession, workspace_manager, WORKSPACE_ROOT
@@ -77,6 +77,26 @@ _token_tracker = TokenTracker()
 _ai_profiles = AIProfileManager(_config)
 _last_trace: Optional[dict] = None
 _last_job: Optional[AgentJob] = None
+
+
+def _reset_all_cowork_state() -> None:
+    """
+    Wipe all persisted Cowork state under ~/.cowork/* and recreate root dirs.
+    """
+    import shutil
+
+    if CONFIG_DIR.exists():
+        for p in CONFIG_DIR.iterdir():
+            try:
+                if p.is_dir():
+                    shutil.rmtree(p, ignore_errors=True)
+                else:
+                    p.unlink(missing_ok=True)
+            except Exception:
+                pass
+    CONFIG_DIR.mkdir(exist_ok=True)
+    (CONFIG_DIR / "sessions").mkdir(exist_ok=True)
+    (CONFIG_DIR / "scratchpad").mkdir(exist_ok=True)
 
 def _make_api_client() -> "APIClient":
     """Create an APIClient wired to the global token tracker."""
@@ -467,25 +487,55 @@ async def handle_command(
             render_config(_config.all())
 
     elif command == "/scratchpad":
-        items = scratchpad.list_all()
-        if not items:
-            console.print("[muted]Scratchpad is empty.[/muted]")
+        try:
+            scratchpad._load_index()
+        except Exception:
+            pass
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        if sub in ("read", "get") and len(parts) > 2:
+            target = parts[2].strip().split()[0]
+            content = None
+            display_ref = target
+
+            if target.isdigit():
+                idx = int(target)
+                items = scratchpad.list_all()
+                if idx < 1 or idx > len(items):
+                    render_error(f"Scratchpad number out of range: {target}", hint="Use /scratchpad to list valid numbers.")
+                    return True, None, needs_rebuild
+                item = items[idx - 1]
+                display_ref = f"ref:{item['key']}"
+                content = scratchpad.get(item["key"])
+            else:
+                content = scratchpad.get(target)
+                display_ref = f"ref:{target.replace('ref:', '')}"
+
+            if content is None:
+                render_error(f"Scratchpad item not found: {target}", hint="Use /scratchpad to list item numbers.")
+            else:
+                console.print(Panel(content, title=f"[memory]📝 {display_ref}[/memory]", border_style="memory"))
         else:
-            from rich.table import Table
-            from rich import box
-            table = Table(title="📝 Scratchpad", box=box.ROUNDED, border_style="memory")
-            table.add_column("Key", style="highlight")
-            table.add_column("Description", style="text")
-            table.add_column("Size", style="muted", justify="right")
-            table.add_column("Saved At", style="dim_text")
-            for item in items:
-                table.add_row(
-                    item["key"],
-                    item.get("description", "—"),
-                    f"{item['size_chars']:,} chars",
-                    item.get("saved_at", "")[:16],
-                )
-            console.print(table)
+            items = scratchpad.list_all()
+            if not items:
+                console.print("[muted]Scratchpad is empty.[/muted]")
+            else:
+                from rich.table import Table
+                from rich import box
+                table = Table(title="📝 Scratchpad", box=box.ROUNDED, border_style="memory")
+                table.add_column("No", style="muted", justify="right")
+                table.add_column("Key", style="highlight")
+                table.add_column("Description", style="text")
+                table.add_column("Size", style="muted", justify="right")
+                table.add_column("Saved At", style="dim_text")
+                for i, item in enumerate(items, start=1):
+                    table.add_row(
+                        str(i),
+                        item["key"],
+                        item.get("description", "—"),
+                        f"{item['size_chars']:,} chars",
+                        item.get("saved_at", "")[:16],
+                    )
+                console.print(table)
 
     elif command == "/workspace":
         from rich.table import Table
@@ -696,6 +746,13 @@ async def handle_command(
 
     elif command == "/tools":
         render_tools_list(get_all_available_tools())
+
+    elif command == "/reset":
+        if click.confirm("⚠️  This will permanently delete ALL data in ~/.cowork/* . Continue?", default=False):
+            with ThinkingSpinner("Resetting Cowork state"):
+                _reset_all_cowork_state()
+            render_success("🧹 Reset complete. All ~/.cowork/* data has been deleted.")
+            return False, None, False
 
     elif command == "/ai":
         sub = parts[1].lower() if len(parts) > 1 else ""
@@ -948,6 +1005,16 @@ async def interactive_loop(
         if trace_enabled and getattr(job, "trace_path", ""):
             console.print(f"  [dim_text]🧾 Trace saved: {job.trace_path}[/dim_text]")
 
+        # Workspace can be renamed after title generation; rebind scratchpad path if it moved.
+        ws = getattr(session, "_ws", None)
+        if ws and getattr(scratchpad, "_dir", None) != ws.scratchpad_path:
+            scratchpad = Scratchpad.__new__(Scratchpad)
+            scratchpad.session_id = session.session_id
+            scratchpad._dir = ws.scratchpad_path
+            scratchpad._dir.mkdir(exist_ok=True)
+            scratchpad._index = {}
+            scratchpad._load_index()
+
         # Cleanup old jobs periodically
         _job_manager.cleanup_completed(keep=50)
 
@@ -1185,6 +1252,20 @@ def tools() -> None:
     """List all currently activated tools."""
     print_banner()
     render_tools_list(get_all_available_tools())
+
+
+@cli.command()
+@click.option("--yes", is_flag=True, help="Skip confirmation prompt")
+def reset(yes: bool) -> None:
+    """Destroy all ~/.cowork/* state and start fresh."""
+    print_banner()
+    if not yes and not click.confirm("⚠️  Delete ALL data in ~/.cowork/* ? This cannot be undone.", default=False):
+        console.print("[muted]Reset cancelled.[/muted]")
+        return
+
+    with ThinkingSpinner("Resetting Cowork state"):
+        _reset_all_cowork_state()
+    render_success("🧹 Reset complete. All ~/.cowork/* data has been deleted.")
 
 
 @cli.command()

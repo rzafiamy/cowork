@@ -96,17 +96,22 @@ Handling large tool outputs (e.g., a 10,000-word scraped article) is critical to
 
 ### 5.2 Offloading Logic
 If a tool result exceeds the token limit:
-1.  **Intercept**: The `ToolExecutor` catches the large string.
-2.  **Offload**: Saves the full content to `Scratchpad` (e.g., key `tool_output_search_999`).
-3.  **Compress**: Generates a preview:
+1.  **Intercept**: The `GeneralPurposeAgent` checks raw tool output size.
+2.  **Name Generation**: It asks the compression model for JSON metadata (`key`, `description`) for a meaningful ref name.
+3.  **Offload**: Saves full content to `Scratchpad` using that key.
+4.  **Compress**: Generates a preview:
     *   *Head*: First 20% of tokens.
     *   *Gap*: `... ✂️ [Content Offloaded] ...`
     *   *Tail*: Last 20% of tokens.
-4.  **Return**: Returns the **Preview** + **Pointer (`ref:tool_output_search_999`)** to the LLM.
+5.  **Return**: Returns the **Preview** + **Pointer (`ref:<generated_key>`)** to the LLM.
 
 **Benefit for Architect**: The LLM "knows" it has the data (via the preview) and can reference it in future calls (via the key), but the context window remains unpolluted.
 
-### 5.3 Step-Intersection Tool Assessment (Current)
+### 5.3 No-Double-Compression Guard
+- If output already contains `[Full result saved as ref:...]`, compression is skipped.
+- This prevents "scratchpad of scratchpad" cascades.
+
+### 5.4 Step-Intersection Tool Assessment (Current)
 To improve reasoning quality between REACT steps, tool outputs are assessed immediately after execution.
 
 For each tool result, the agent derives:

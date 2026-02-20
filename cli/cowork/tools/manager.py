@@ -3,6 +3,7 @@
 This file acts as the primary interface for the tool system.
 """
 
+import re
 from typing import Any, Callable, Optional, Dict, List
 
 from ..config import Scratchpad
@@ -158,6 +159,9 @@ class ToolExecutor:
         )
 
     def _clamp_output(self, tool_name: str, result: str) -> str:
+        if re.search(r"\[Full result saved as ref:[^\]]+\]", result or ""):
+            return result
+
         limit = self.config.get("tool_output_limit_tokens", OP_DEFAULTS["tool_output_limit_tokens"])
         estimated_tokens = len(result) // 4
         if estimated_tokens > limit:

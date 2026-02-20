@@ -45,6 +45,11 @@ The Gateway detects `ref:key` patterns in arguments.
 *   **Action**: Recursively resolves them from the **Scratchpad**.
 *   **Context Isolation**: Raw data is injected *only* for the tool execution, keeping it out of the potentially expensive chat history.
 
+### 🧷 Compression Integrity Rules (Current)
+*   **Reference-first compression**: Any large offload path must save full content to scratchpad and return a `ref:key`.
+*   **No double compression**: Outputs already marked as archived are skipped by compression guards.
+*   **Conversation source archival**: Context compression stores the full pre-compression source before map-reduce summarization.
+
 ---
 
 ## 📊 Operational Settings Matrix
@@ -92,3 +97,12 @@ As defined in the `Agent System Prompt`, the AI follows a 4-path recovery strate
 2.  🛣️ **Pivot**: If a tool is unavailable, switch to a fallback tool (e.g., `web_search` -> `wiki_get`).
 3.  👤 **Request Help**: If a reference (`ref:key`) is missing, ask the user to provide the context.
 4.  🩹 **Graceful Exit**: If the failure is persistent, admit it honestly and summarize what *was* found.
+
+---
+
+## 🧹 Full-State Reset (CLI)
+For destructive fresh-start operations, the CLI now supports:
+- `cowork reset` (or `cowork reset --yes`)
+- `/reset` (interactive slash command)
+
+Both clear all persisted state under `~/.cowork/*`.

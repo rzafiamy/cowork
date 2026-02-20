@@ -25,6 +25,15 @@ Standard LLMs fail on massive data due to:
 ## 🖇️ Context Optimization & Compression
 When the conversation gets "heavy," the **Context Compressor** utility (`ContextCompressor` in `cli/cowork/agent.py`) activates automatically.
 
+### Compression Safety Contract (Current)
+1. **No compression without reference**:
+   - Before conversation compression, full source history is archived to scratchpad with a named `ref:key`.
+   - The injected summary includes that source pointer.
+2. **No summary-of-summary loops**:
+   - Prior `[CONVERSATION SUMMARY]` system messages are excluded from future compression input.
+3. **No scratchpad-of-scratchpad loops**:
+   - Outputs already marked with `[Full result saved as ref:...]` are not compressed again.
+
 ### 1️⃣ Atomic Compression (Surge Protection)
 Identifies **"Heavy Nodes"**—single messages (e.g., a huge SQL output) occupying >75% of the window.
 *   🎯 **Action**: Fragments the message for targeted reduction.

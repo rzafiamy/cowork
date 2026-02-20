@@ -42,10 +42,13 @@ This document traces the path of a user request from the moment it leaves the ke
     *   `AGENT_SYSTEM_PROMPT` for workflow/tool turns.
 2.  **🤔 Reasoning**: Agent analyzes context and formulates a plan.
 3.  **🖇️ Context Tuning**:
-    *   Triggers **Atomic Compression** on giant messages.
-    *   Inlines conversation summaries if the window is cramped.
+    *   If context is oversized, the full compressible source is first archived to scratchpad with a named `ref:key`.
+    *   Then Map-Reduce summarization runs and injects `[CONVERSATION SUMMARY]` with `Source archived at ref:...`.
+    *   Existing `[CONVERSATION SUMMARY]` blocks are excluded from future compression input (prevents summary-of-summary loops).
 4.  **⚙️ Multi-Action**: Executes tools (Parallelized when possible).
-5.  **🥪 Output Guard**: Large tool results are "Sandwiched" before returning to the loop.
+5.  **🥪 Output Guard**:
+    *   Large tool results are archived to scratchpad first, then returned as sandwich preview + `ref:key`.
+    *   Already archived outputs (`[Full result saved as ref:...]`) are not re-compressed.
 6.  **🧾 Step Intersection Reflection (Critical)**:
     *   After each tool batch, the agent creates a compact structured assessment per tool:
         * `tool`
@@ -118,6 +121,7 @@ sequenceDiagram
     loop REACT Loop
         Agent->>Comp: optimizeContext()
         alt Buffer low
+            Comp->>Comp: Save full source to scratchpad (ref:key)
             Comp->>API: map-reduce summarize history
             API-->>Comp: Summary
         end
@@ -133,7 +137,8 @@ sequenceDiagram
         alt Tool Use
             Agent->>Agent: Execute tool calls
             alt Output Large
-                Agent->>Comp: clamp and preview output
+                Agent->>Agent: Save full output to scratchpad (ref:key)
+                Agent->>Agent: Return preview + pointer
             end
         end
     end

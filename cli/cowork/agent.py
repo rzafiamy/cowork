@@ -143,16 +143,20 @@ class ContextCompressor:
         history_text = "\n\n".join(
             f"{m['role'].upper()}: {m.get('content', '')}"
             for m in compressible
-            if m.get("content")
+            if m.get("content") and not (
+                m.get("role") == "system"
+                and str(m.get("content", "")).startswith("[CONVERSATION SUMMARY]")
+            )
         )
         source_ref = ""
-        try:
-            key, desc = await self._generate_ref_metadata(history_text)
-            source_ref = self.scratchpad.save(key, history_text, description=desc)
-            if trace_cb:
-                trace_cb("context_compression_source_saved", {"ref": source_ref, "description": desc})
-        except Exception:
-            source_ref = ""
+        if history_text.strip():
+            try:
+                key, desc = await self._generate_ref_metadata(history_text)
+                source_ref = self.scratchpad.save(key, history_text, description=desc)
+                if trace_cb:
+                    trace_cb("context_compression_source_saved", {"ref": source_ref, "description": desc})
+            except Exception:
+                source_ref = ""
 
         # Map phase: chunk and summarize (12k chars ≈ 3k tokens)
         chunks = self._smart_chunk(history_text, chunk_size=12000)
@@ -372,6 +376,9 @@ class GeneralPurposeAgent:
             return key, f"Archived {kind}"
 
     async def _compress_tool_result_if_needed(self, tool_name: str, result: str) -> str:
+        if re.search(r"\[Full result saved as ref:[^\]]+\]", result or ""):
+            return result
+
         limit = self.config.get("tool_output_limit_tokens", OP_DEFAULTS["tool_output_limit_tokens"])
         estimated_tokens = len(result or "") // 4
         if estimated_tokens <= limit:
