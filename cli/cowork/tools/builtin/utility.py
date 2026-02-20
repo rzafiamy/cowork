@@ -4,8 +4,38 @@ Basic mathematical and temporal functions.
 """
 
 import math
+import re
+import unicodedata
 from typing import Any, Dict, Optional
 from ..base import BaseTool
+
+
+def sanitize_for_audio(text: str) -> str:
+    """
+    Convert markdown-ish content into cleaner plain text for TTS.
+    Mirrors the sanitization pipeline requested by the user.
+    """
+    sanitized = text or ""
+    sanitized = re.sub(r"(\*\*|__)(.*?)\1", r"\2", sanitized, flags=re.DOTALL)
+    sanitized = re.sub(r"(\*|_)(.*?)\1", r"\2", sanitized, flags=re.DOTALL)
+    sanitized = re.sub(r"`{1,3}(.*?)`{1,3}", r"\1", sanitized, flags=re.DOTALL)
+    sanitized = re.sub(r"~~(.*?)~~", r"\1", sanitized, flags=re.DOTALL)
+    sanitized = re.sub(r"(?m)^#{1,6}\s*(.*)$", r"\1", sanitized)
+    sanitized = re.sub(r"\[(.*?)\]\(.*?\)", r"\1", sanitized, flags=re.DOTALL)
+    sanitized = re.sub(r"!\[.*?\]\(.*?\)", "", sanitized, flags=re.DOTALL)
+    sanitized = re.sub(r"(?m)^\s*>\s*(.*)$", r"\1", sanitized)
+    sanitized = re.sub(r"(?m)^\s*[-*+]\s*(.*)$", r"\1", sanitized)
+    sanitized = re.sub(r"\n{2,}", ". ", sanitized)
+    sanitized = sanitized.replace("\n", " ")
+
+    allowed_punct = set(".,!?;:'\"(){}[]-")
+    filtered_chars = []
+    for ch in sanitized:
+        cat = unicodedata.category(ch)
+        if ch.isspace() or ch in allowed_punct or cat.startswith("L") or cat.startswith("N"):
+            filtered_chars.append(ch)
+    return "".join(filtered_chars).strip()
+
 
 class CalcTool(BaseTool):
     @property

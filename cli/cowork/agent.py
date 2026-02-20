@@ -46,9 +46,42 @@ class ContextCompressor:
 
     # Prompt sourced from prompts.py — edit there to change compression behavior.
 
-    def __init__(self, api_client: APIClient, config: ConfigManager) -> None:
+    def __init__(self, api_client: APIClient, config: ConfigManager, scratchpad: Scratchpad) -> None:
         self.api_client = api_client
         self.config = config
+        self.scratchpad = scratchpad
+
+    def _sanitize_ref_key(self, raw: str, prefix: str) -> str:
+        cleaned = re.sub(r"[^a-zA-Z0-9_]+", "_", (raw or "").strip().lower()).strip("_")
+        if not cleaned:
+            cleaned = f"{prefix}_{int(time.time())}"
+        return cleaned[:80]
+
+    async def _generate_ref_metadata(self, history_text: str) -> tuple[str, str]:
+        excerpt = history_text[:1200]
+        prompt = (
+            "Create a compact JSON object for archival naming.\n"
+            "Return ONLY JSON with keys: key, description.\n"
+            "Rules:\n"
+            "- key: snake_case, <= 60 chars, filename-safe, meaningful topic title\n"
+            "- description: <= 100 chars\n\n"
+            f"Conversation excerpt:\n{excerpt}"
+        )
+        try:
+            result = await self.api_client.chat(
+                messages=[{"role": "user", "content": prompt}],
+                model=self.config.get("model_compress"),
+                temperature=0.1,
+                response_format={"type": "json_object"},
+                max_tokens=80,
+            )
+            payload = json.loads(result.get("content", "{}"))
+            key = self._sanitize_ref_key(str(payload.get("key", "")), "conversation")
+            desc = str(payload.get("description", "")).strip()[:100] or "Compressed conversation source"
+            return key, desc
+        except Exception:
+            fallback = self._sanitize_ref_key(excerpt.split("\n", 1)[0], "conversation")
+            return fallback, "Compressed conversation source"
 
     def _estimate_tokens(self, messages: list[dict]) -> int:
         """Rough token estimate: 4 chars ≈ 1 token."""
@@ -112,6 +145,14 @@ class ContextCompressor:
             for m in compressible
             if m.get("content")
         )
+        source_ref = ""
+        try:
+            key, desc = await self._generate_ref_metadata(history_text)
+            source_ref = self.scratchpad.save(key, history_text, description=desc)
+            if trace_cb:
+                trace_cb("context_compression_source_saved", {"ref": source_ref, "description": desc})
+        except Exception:
+            source_ref = ""
 
         # Map phase: chunk and summarize (12k chars ≈ 3k tokens)
         chunks = self._smart_chunk(history_text, chunk_size=12000)
@@ -145,7 +186,11 @@ class ContextCompressor:
         combined = "\n\n".join(summaries)
         summary_message = {
             "role": "system",
-            "content": f"[CONVERSATION SUMMARY]\n{combined}",
+            "content": (
+                f"[CONVERSATION SUMMARY]\n"
+                f"{f'Source archived at {source_ref}\\n' if source_ref else ''}"
+                f"{combined}"
+            ),
         }
 
         # ALWAYS keep original system prompt at index 0 if it was role: system
@@ -223,7 +268,7 @@ class GeneralPurposeAgent:
         self.trace_cb = trace_callback or (lambda _event, _data: None)
 
         self.router = MetaRouter(api_client, config.get("model_router", "gpt-4o-mini"))
-        self.compressor = ContextCompressor(api_client, config)
+        self.compressor = ContextCompressor(api_client, config, scratchpad)
         self.gateway = ExecutionGateway(scratchpad)
         self.executor = ToolExecutor(scratchpad, config, status_callback=self.status_cb)
         self.firewall = FirewallManager()
@@ -274,9 +319,84 @@ class GeneralPurposeAgent:
             r"\bi am\b", r"\bmy name is\b", r"\bi live in\b", r"\bi work as\b",
             r"\bi prefer\b", r"\bi like\b", r"\bi dislike\b", r"\balways\b", r"\bnever\b",
             r"\bmy goal is\b", r"\bi'm working on\b", r"\bwe are building\b",
-            r"\bremember\b", r"\bsave this\b", r"\bfor future\b",
+            r"\bremember\b", r"\bsave this\b", r"\bfor future\b", r"\bimportant\b", r"\bnote this\b",
         ]
         return any(re.search(p, text) for p in durable_patterns)
+
+    def _make_meaningful_ref_key(self, user_input: str) -> str:
+        """
+        Build a stable, readable scratchpad key from user intent.
+        """
+        words = re.findall(r"[a-zA-Z0-9_]+", (user_input or "").lower())
+        stop = {
+            "the", "and", "for", "with", "that", "this", "from", "into", "your", "you",
+            "want", "need", "please", "just", "then", "about", "have", "will", "would",
+        }
+        meaningful = [w for w in words if len(w) >= 3 and w not in stop][:5]
+        slug = "_".join(meaningful) or "important_note"
+        return f"mem_{slug}_{int(time.time())}"
+
+    def _sanitize_ref_key(self, raw: str, prefix: str) -> str:
+        cleaned = re.sub(r"[^a-zA-Z0-9_]+", "_", (raw or "").strip().lower()).strip("_")
+        if not cleaned:
+            cleaned = f"{prefix}_{int(time.time())}"
+        return cleaned[:90]
+
+    async def _generate_ref_metadata(self, content: str, kind: str, hint: str = "") -> tuple[str, str]:
+        excerpt = (content or "")[:1200]
+        prompt = (
+            "Create archival metadata for scratchpad storage.\n"
+            "Return ONLY JSON with keys: key, description.\n"
+            "Rules:\n"
+            "- key: snake_case, <= 70 chars, filename-safe, specific\n"
+            "- description: <= 110 chars\n"
+            f"- kind: {kind}\n"
+            f"- hint: {hint or 'none'}\n\n"
+            f"Content excerpt:\n{excerpt}"
+        )
+        try:
+            result = await self.api_client.chat(
+                messages=[{"role": "user", "content": prompt}],
+                model=self.config.get("model_compress"),
+                temperature=0.1,
+                response_format={"type": "json_object"},
+                max_tokens=90,
+            )
+            payload = json.loads(result.get("content", "{}"))
+            key = self._sanitize_ref_key(str(payload.get("key", "")), kind)
+            desc = str(payload.get("description", "")).strip()[:110] or f"Archived {kind}"
+            return key, desc
+        except Exception:
+            fallback_seed = f"{kind}_{hint}_{excerpt[:80]}"
+            key = self._sanitize_ref_key(fallback_seed, kind)
+            return key, f"Archived {kind}"
+
+    async def _compress_tool_result_if_needed(self, tool_name: str, result: str) -> str:
+        limit = self.config.get("tool_output_limit_tokens", OP_DEFAULTS["tool_output_limit_tokens"])
+        estimated_tokens = len(result or "") // 4
+        if estimated_tokens <= limit:
+            return result
+
+        key, desc = await self._generate_ref_metadata(result, kind="tool_output", hint=tool_name)
+        ref = self.scratchpad.save(key, result, description=desc)
+        preview = self.scratchpad.sandwich_preview(result)
+        return f"{preview}\n\n[Full result saved as {ref}]"
+
+    def _save_important_ref_memory(self, user_input: str, assistant_response: str) -> Optional[str]:
+        """
+        Persist an important turn as a named ref with compact description.
+        """
+        key = self._make_meaningful_ref_key(user_input)
+        short_user = " ".join((user_input or "").split())[:120]
+        description = short_user or "Important turn snapshot"
+        content = (
+            f"USER_REQUEST:\n{user_input.strip()}\n\n"
+            f"ASSISTANT_RESPONSE:\n{assistant_response.strip()}\n"
+        )
+        try:
+            return self.scratchpad.save(key, content, description=description)
+        except Exception:
+            return None
 
     # ── Scratchpad Index Builder ───────────────────────────────────────────────
 
@@ -349,6 +469,33 @@ class GeneralPurposeAgent:
             "finding": finding,
             "next_action": next_action,
         }
+
+    def _snapshot_assistant_output(self, content: str, step: int) -> Optional[str]:
+        """
+        Persist assistant text for exact downstream reuse (e.g., text -> TTS).
+        Always updates ref:last_assistant_response and optionally stores a step snapshot.
+        """
+        text = (content or "").strip()
+        if not text:
+            return None
+
+        try:
+            self.scratchpad.save(
+                "last_assistant_response",
+                text,
+                description="Exact text of the latest assistant response for tool chaining",
+            )
+            if len(text) >= 400:
+                key = f"assistant_step_{int(time.time())}_{step}"
+                self.scratchpad.save(
+                    key,
+                    text,
+                    description=f"Assistant response snapshot from step {step}",
+                )
+                return f"ref:{key}"
+        except Exception:
+            return None
+        return None
 
     def _build_tool_reflection_note(self, step: int, assessments: list[dict[str, str]]) -> str:
         """
@@ -615,6 +762,7 @@ class GeneralPurposeAgent:
             content = result.get("content", "")
             tool_calls = result.get("tool_calls", [])
             finish_reason = result.get("finish_reason", "stop")
+            snapshot_ref = self._snapshot_assistant_output(content, step + 1)
             self.trace_cb(
                 "llm_response",
                 {
@@ -622,6 +770,7 @@ class GeneralPurposeAgent:
                     "content": content,
                     "tool_calls": tool_calls,
                     "finish_reason": finish_reason,
+                    "snapshot_ref": snapshot_ref or "ref:last_assistant_response",
                     "usage": result.get("usage", {}),
                 },
             )
@@ -723,9 +872,10 @@ class GeneralPurposeAgent:
                                 "content": "🛡️ [FIREWALL CANCEL] Tool execution cancelled by the user.",
                             }
 
-                    result_str = await asyncio.get_event_loop().run_in_executor(
-                        None, self.executor.execute, name, resolved_args
+                    raw_result = await asyncio.get_event_loop().run_in_executor(
+                        None, self.executor.execute, name, resolved_args, False
                     )
+                    result_str = await self._compress_tool_result_if_needed(name, raw_result)
                     trace.add_step("tool_execution_result", {"name": name, "args": resolved_args, "result": result_str})
                     self.trace_cb(
                         "tool_execution_result",
@@ -843,6 +993,26 @@ class GeneralPurposeAgent:
             self.trace_cb("memory_update_done", {"persisted": True})
         else:
             self.trace_cb("memory_update_done", {"persisted": False, "reason": "non-durable message"})
+
+        auto_refs = bool(self.config.get("auto_save_important_refs", True))
+        should_save_session_ref = (
+            auto_refs
+            and bool(final_response.strip())
+            and (
+                self._should_persist_memory(user_input)
+                or total_tool_calls > 0
+            )
+        )
+        if should_save_session_ref:
+            ref = self._save_important_ref_memory(user_input, final_response)
+            self.trace_cb(
+                "important_ref_saved",
+                {
+                    "enabled": auto_refs,
+                    "saved": bool(ref),
+                    "reference": ref or "",
+                },
+            )
 
         return final_response
 

@@ -21,6 +21,7 @@ Configuration keys (set via /mm or /config set):
   mm_tts_endpoint       e.g. https://api.openai.com/v1
   mm_tts_token          API key for the TTS service
   mm_tts_model          Default model (e.g. tts-1, tts-1-hd)
+  mm_tts_voice          Forced voice (e.g. alloy, echo, fable, onyx, nova, shimmer)
 
 API Design (OpenAI-compatible):
   POST /v1/recognize                — Vision / Image analysis
@@ -36,6 +37,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from ..base import BaseTool
+from .utility import sanitize_for_audio
 from ...workspace import workspace_manager, WORKSPACE_ROOT
 
 
@@ -466,6 +468,7 @@ class TextToSpeechTool(BaseTool):
         return (
             "Convert text to speech audio and save to the workspace artifacts folder. "
             "Returns the path to the saved audio file. "
+            "Uses voice from mm_tts_voice config/env (LLM cannot override it). "
             "Requires mm_tts_endpoint and mm_tts_token to be configured."
         )
 
@@ -482,9 +485,9 @@ class TextToSpeechTool(BaseTool):
                     "type": "string",
                     "description": "The text to convert to speech (max ~4096 characters).",
                 },
-                "voice": {
+                "input_ref": {
                     "type": "string",
-                    "description": "Voice name, e.g. 'alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer' (model-dependent).",
+                    "description": "Optional scratchpad reference or text fallback. Use ref:last_assistant_response for exact replay.",
                 },
                 "response_format": {
                     "type": "string",
@@ -495,15 +498,16 @@ class TextToSpeechTool(BaseTool):
                     "description": "Output filename, e.g. 'speech.mp3'. Auto-generated if omitted.",
                 },
             },
-            "required": ["input"],
+            "required": [],
         }
 
     def execute(
         self,
-        input: str,
-        voice: str = "alloy",
+        input: str = "",
+        input_ref: str = "",
         response_format: str = "mp3",
         filename: str = "",
+        voice: str = "",
     ) -> str:
         endpoint = _cfg(self.config, "mm_tts_endpoint", global_key="api_endpoint")
         token    = _cfg(self.config, "mm_tts_token",    global_key="api_key")
@@ -515,15 +519,20 @@ class TextToSpeechTool(BaseTool):
             )
 
         model = _cfg(self.config, "mm_tts_model", fallback="tts-1")
+        forced_voice = _cfg(self.config, "mm_tts_voice", fallback="")
         valid_formats = ("mp3", "opus", "aac", "flac", "wav", "pcm")
         response_format = response_format if response_format in valid_formats else "mp3"
+        source_text = (input or "").strip() or (input_ref or "").strip()
+        sanitized_input = sanitize_for_audio(source_text)
+        if not sanitized_input:
+            return "❌ TTS input is empty after sanitization."
 
-        self._emit(f"🔊 Generating TTS audio (voice: {voice}, model: {model})...")
+        self._emit(f"🔊 Generating TTS audio (voice: {forced_voice}, model: {model})...")
 
         payload = {
             "model": model,
-            "input": input[:4096],  # Safety clamp
-            "voice": voice,
+            "input": sanitized_input[:4096],  # Safety clamp
+            "voice": forced_voice,
             "response_format": response_format,
         }
 
@@ -554,6 +563,6 @@ class TextToSpeechTool(BaseTool):
             f"• File: `{out_path.name}`\n"
             f"• Path: `{out_path}`\n"
             f"• Size: {size_kb} KB\n"
-            f"• Voice: {voice} | Model: {model} | Format: {response_format}\n"
-            f"• Characters: {len(input)}"
+            f"• Voice: {forced_voice} | Model: {model} | Format: {response_format}\n"
+            f"• Characters: {len(sanitized_input)}"
         )

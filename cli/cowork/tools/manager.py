@@ -167,7 +167,7 @@ class ToolExecutor:
             return f"{preview}\n\n[Full result saved as ref:{key}]"
         return result
 
-    def execute(self, tool_name: str, args: dict) -> str:
+    def execute(self, tool_name: str, args: dict, clamp_output: bool = True) -> str:
         self._tool_call_count += 1
         tool = self._tools.get(tool_name)
         if not tool:
@@ -175,6 +175,7 @@ class ToolExecutor:
         
         try:
             result = tool.execute(**args)
-            return self._clamp_output(tool_name, str(result))
+            out = str(result)
+            return self._clamp_output(tool_name, out) if clamp_output else out
         except Exception as e:
             return f"{TOOL_ERROR_PREFIX} Execution failed: {e}."

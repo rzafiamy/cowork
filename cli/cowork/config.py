@@ -61,6 +61,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "max_retries":                5,
     "retry_base_delay":           2.0,
     "search_freshness":           "1wk",
+    "auto_save_important_refs":   True,
     "stream":                     True,
     "show_trace":                 False,
     "theme":                      "dark",
@@ -77,6 +78,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Text-to-Speech (TTS)
     "mm_tts_endpoint":            "",
     "mm_tts_model":               "",
+    "mm_tts_voice":               "",
 }
 
 SENSITIVE_KEYS = {
