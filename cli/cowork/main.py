@@ -35,6 +35,7 @@ from .config import (
     AgentJob,
     AIProfileManager,
     ConfigManager,
+    FirewallManager,
     JobManager,
     Scratchpad,
     Session,
@@ -87,6 +88,22 @@ _token_tracker = TokenTracker()
 _ai_profiles = AIProfileManager(_config)
 _last_trace: Optional[dict] = None
 _last_job: Optional[AgentJob] = None
+
+
+def _verify_firewall_integrity() -> None:
+    """
+    Validate firewall.yaml integrity at startup.
+    Fail fast instead of silently falling back to ask-mode.
+    """
+    fw = FirewallManager()
+    ok, reason = fw.is_integrity_ok()
+    if ok:
+        return
+    render_error(
+        "Invalid firewall configuration.",
+        hint=f"Fix {fw.path}. Reason: {reason}",
+    )
+    raise click.exceptions.Exit(2)
 
 
 def _reset_all_cowork_state() -> None:
@@ -1041,6 +1058,8 @@ def cli(ctx: click.Context) -> None:
     A powerful autonomous AI agent with Manager-Worker architecture,
     long-term memory, meta-routing, and parallel tool execution.
     """
+    _verify_firewall_integrity()
+
     if ctx.invoked_subcommand is None:
         # Default: start interactive chat
         ctx.invoke(chat)

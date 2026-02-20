@@ -778,19 +778,50 @@ class FirewallManager:
         self.config_dir = config_dir
         self.path = config_dir / "firewall.yaml"
         self._rules: dict[str, Any] = {}
+        self.last_load_error: str = ""
         self._load()
 
     def _load(self) -> None:
         """Load rules from YAML. Create default if missing."""
+        self.last_load_error = ""
         if not self.path.exists():
             self._create_default()
         
         try:
             with open(self.path, "r") as f:
                 self._rules = yaml.safe_load(f) or {}
-        except Exception:
+            if not isinstance(self._rules, dict):
+                self.last_load_error = "Top-level YAML document must be an object/map."
+                self._rules = {"policy": {"default_action": "ask"}}
+                return
+
+            # Basic shape validation so malformed structures fail fast.
+            tools = self._rules.get("tools", [])
+            blacklist = self._rules.get("blacklist", [])
+            whitelist = self._rules.get("whitelist", None)
+            policy = self._rules.get("policy", {})
+            if not isinstance(tools, list):
+                self.last_load_error = "Field 'tools' must be a list."
+            elif not isinstance(blacklist, list):
+                self.last_load_error = "Field 'blacklist' must be a list."
+            elif whitelist is not None and not isinstance(whitelist, list):
+                self.last_load_error = "Field 'whitelist' must be a list when set."
+            elif policy is not None and not isinstance(policy, dict):
+                self.last_load_error = "Field 'policy' must be an object/map."
+
+            if self.last_load_error:
+                self._rules = {"policy": {"default_action": "ask"}}
+                return
+        except Exception as e:
             # Fail-closed on invalid firewall config
+            self.last_load_error = f"YAML parse error in firewall.yaml: {e}"
             self._rules = {"policy": {"default_action": "ask"}}
+
+    def is_integrity_ok(self) -> tuple[bool, str]:
+        """Return whether firewall file loaded cleanly and passed basic schema checks."""
+        if self.last_load_error:
+            return False, self.last_load_error
+        return True, ""
 
     def _normalize_action(self, action: Any) -> str:
         """Normalize firewall action; unknown values fail-closed to 'ask'."""
