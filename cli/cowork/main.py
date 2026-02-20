@@ -15,14 +15,17 @@ Usage:
 """
 
 import asyncio
+import json
 import os
 import sys
 import time
 import uuid
+from pathlib import Path
 from typing import Optional
 
 import click
 from rich.console import Console
+from rich.panel import Panel
 from rich.rule import Rule
 
 from .agent import GeneralPurposeAgent
@@ -32,6 +35,12 @@ from .cron import CronManager
 from .memoria import Memoria
 from .workspace import WorkspaceSession, workspace_manager, WORKSPACE_ROOT
 from .tools import get_all_available_tools
+from .tracing import (
+    WorkflowTraceLogger,
+    find_latest_trace_file,
+    format_trace_text,
+    load_trace_events,
+)
 from .ui import (
     ThinkingSpinner,
     StreamingRenderer,
@@ -93,6 +102,7 @@ async def run_agent_turn(
     memoria: Memoria,
     show_routing: bool = True,
     unattended: bool = False,
+    trace_enabled: bool = False,
 ) -> tuple[str, AgentJob]:
     """
     Execute one full agentic turn.
@@ -109,6 +119,14 @@ async def run_agent_turn(
         return "⚠️  Job queue is full (max 10 concurrent jobs). Please wait.", job
 
     _job_manager.start(job.job_id)
+    trace_logger = WorkflowTraceLogger(
+        enabled=trace_enabled,
+        session_id=session.session_id,
+        job_id=job.job_id,
+        workspace_path=getattr(getattr(session, "_ws", None), "path", None),
+    )
+    if trace_logger.file_path:
+        job.trace_path = str(trace_logger.file_path)
 
     # Spinner + status tracking
     spinner = ThinkingSpinner("Cowork is thinking")
@@ -141,6 +159,7 @@ async def run_agent_turn(
             job_manager=_job_manager,
             status_callback=on_status,
             stream_callback=on_stream_token,
+            trace_callback=trace_logger.log,
         )
 
         # Capture routing decision for display
@@ -230,6 +249,17 @@ async def run_agent_turn(
             ws.save()
 
         _last_job = job
+        trace_logger.close(
+            {
+                "status": "completed",
+                "job_id": job.job_id,
+                "steps": job.steps,
+                "tool_calls": job.tool_calls,
+                "trace_path": getattr(job, "trace_path", ""),
+            }
+        )
+        global _last_trace
+        _last_trace = {"path": getattr(job, "trace_path", ""), "job_id": job.job_id}
         return response, job
 
     except APIError as e:
@@ -238,6 +268,8 @@ async def run_agent_turn(
         elapsed = time.time() - start_time
         error_msg = f"API Error after {elapsed:.1f}s: {e}"
         _job_manager.fail(job.job_id, str(e))
+        trace_logger.log("turn_error", {"type": "api_error", "error": str(e)})
+        trace_logger.close({"status": "failed", "job_id": job.job_id, "error": str(e)})
         if not unattended:
             render_error(str(e), hint="Check your API key and endpoint in /config")
         return error_msg, job
@@ -245,6 +277,8 @@ async def run_agent_turn(
         if not unattended:
             spinner.stop()
         _job_manager.fail(job.job_id, str(e))
+        trace_logger.log("turn_error", {"type": "exception", "error": str(e)})
+        trace_logger.close({"status": "failed", "job_id": job.job_id, "error": str(e)})
         if not unattended:
             render_error(str(e))
         return str(e), job
@@ -531,11 +565,41 @@ async def handle_command(
             console.print("[dim_text]  /workspace clean         — delete all sessions and workspace folders[/dim_text]")
 
     elif command == "/trace":
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        if sub in ("full", "raw", "path"):
+            target_path = ""
+            if len(parts) > 2:
+                target_path = parts[2]
+            elif _last_job and getattr(_last_job, "trace_path", ""):
+                target_path = _last_job.trace_path
+            else:
+                latest = find_latest_trace_file(session.session_id)
+                if latest:
+                    target_path = str(latest)
+
+            if not target_path:
+                console.print("[muted]No trace file available yet.[/muted]")
+            else:
+                p = Path(target_path)
+                events = load_trace_events(p)
+                if not events:
+                    console.print(f"[muted]Trace is empty or unreadable: {p}[/muted]")
+                elif sub == "path":
+                    console.print(f"[highlight]{p}[/highlight]")
+                elif sub == "raw":
+                    console.print(Syntax("\n".join(json.dumps(e, ensure_ascii=False) for e in events), "json", theme="monokai", background_color="default"))
+                else:
+                    txt = format_trace_text(events, full=True, max_value_chars=12000)
+                    console.print(Panel.fit(txt, title=f"🧾 Full Trace ({p.name})", border_style="primary"))
+            return True, None, needs_rebuild
+
         if _last_job:
             tree = Tree(f"[primary]🔍 Trace: Job {_last_job.job_id}[/primary]")
             tree.add(f"[muted]Status:[/muted] {_last_job.status}")
             tree.add(f"[muted]Steps:[/muted] {_last_job.steps}")
             tree.add(f"[muted]Tool Calls:[/muted] {_last_job.tool_calls}")
+            if getattr(_last_job, "trace_path", ""):
+                tree.add(f"[muted]Trace File:[/muted] {_last_job.trace_path}")
             
             if hasattr(_last_job, "tool_calls_list") and _last_job.tool_calls_list:
                 tools_tree = tree.add("[tool]🛠️  Tool Execution History[/tool]")
@@ -768,6 +832,7 @@ async def handle_command(
 async def interactive_loop(
     session: Session,
     api_client: APIClient,
+    trace_enabled: bool = False,
 ) -> None:
     """Main interactive REPL loop."""
     scratchpad_session_id = session.session_id
@@ -868,7 +933,10 @@ async def interactive_loop(
             scratchpad=scratchpad,
             memoria=_memoria,
             show_routing=True,
+            trace_enabled=trace_enabled,
         )
+        if trace_enabled and getattr(job, "trace_path", ""):
+            console.print(f"  [dim_text]🧾 Trace saved: {job.trace_path}[/dim_text]")
 
         # Cleanup old jobs periodically
         _job_manager.cleanup_completed(keep=50)
@@ -893,7 +961,8 @@ def cli(ctx: click.Context) -> None:
 @cli.command()
 @click.option("--session-id", "-s", default=None, help="Resume a specific session by ID")
 @click.option("--no-banner", is_flag=True, default=False, help="Skip the banner")
-def chat(session_id: Optional[str], no_banner: bool) -> None:
+@click.option("--trace/--no-trace", default=None, help="Enable full workflow trace logs")
+def chat(session_id: Optional[str], no_banner: bool, trace: Optional[bool]) -> None:
     """Start an interactive agentic chat session."""
     if not no_banner:
         print_banner()
@@ -927,10 +996,11 @@ def chat(session_id: Optional[str], no_banner: bool) -> None:
         console.print(f"  [dim_text]📂 Workspace: workspace/{ws.slug}/[/dim_text]")
 
     api_client = _make_api_client()
+    trace_enabled = _config.get("show_trace", False) if trace is None else trace
 
     async def _run_chat():
         try:
-            await interactive_loop(session, api_client)
+            await interactive_loop(session, api_client, trace_enabled=trace_enabled)
         finally:
             await api_client.close()
 
@@ -946,7 +1016,8 @@ def chat(session_id: Optional[str], no_banner: bool) -> None:
 @click.option("--session-id", "-s", default=None, help="Session ID to use")
 @click.option("--model", "-m", default=None, help="Override model")
 @click.option("--no-stream", is_flag=True, default=False, help="Disable streaming")
-def run(prompt: str, session_id: Optional[str], model: Optional[str], no_stream: bool) -> None:
+@click.option("--trace/--no-trace", default=None, help="Enable full workflow trace logs")
+def run(prompt: str, session_id: Optional[str], model: Optional[str], no_stream: bool, trace: Optional[bool]) -> None:
     """Run a single agentic task and exit."""
     if not _config.is_configured():
         render_error("Not configured. Run 'cowork chat' first to set up.")
@@ -956,6 +1027,7 @@ def run(prompt: str, session_id: Optional[str], model: Optional[str], no_stream:
         _config.set("model_text", model)
     if no_stream:
         _config.set("stream", False)
+    trace_enabled = _config.get("show_trace", False) if trace is None else trace
 
     session = Session.load(session_id) if session_id else Session(title="One-shot")
     if not session:
@@ -975,7 +1047,10 @@ def run(prompt: str, session_id: Optional[str], model: Optional[str], no_stream:
             api_client=api_client,
             scratchpad=scratchpad,
             memoria=memoria,
+            trace_enabled=trace_enabled,
         )
+        if trace_enabled and getattr(job, "trace_path", ""):
+            console.print(f"  [dim_text]🧾 Trace saved: {job.trace_path}[/dim_text]")
         await api_client.close()
 
     asyncio.run(_run())
@@ -1100,6 +1175,44 @@ def tools() -> None:
     """List all currently activated tools."""
     print_banner()
     render_tools_list(get_all_available_tools())
+
+
+@cli.command()
+@click.option("--file", "trace_file", type=click.Path(exists=True, path_type=Path), default=None, help="Open a specific JSONL trace file")
+@click.option("--session-id", "-s", default=None, help="Find latest trace for a session ID")
+@click.option("--raw", is_flag=True, default=False, help="Print raw JSON lines")
+@click.option("--full/--summary", default=True, help="Show full event payloads or keys-only summary")
+def trace(trace_file: Optional[Path], session_id: Optional[str], raw: bool, full: bool) -> None:
+    """Render trace logs in a readable timeline format."""
+    target = trace_file
+    if target is None and _last_trace and _last_trace.get("path"):
+        p = Path(_last_trace["path"])
+        if p.exists():
+            target = p
+    if target is None:
+        latest = find_latest_trace_file(session_id=session_id)
+        if latest:
+            target = latest
+
+    if target is None:
+        render_error("No trace file found.", hint="Run 'cowork chat --trace' or pass --file <path>.")
+        return
+
+    events = load_trace_events(target)
+    if not events:
+        render_error(f"Trace is empty or unreadable: {target}")
+        return
+
+    print_banner()
+    console.print(f"[muted]Trace file:[/muted] [highlight]{target}[/highlight]")
+    console.print(f"[muted]Events:[/muted] {len(events)}")
+    console.print()
+    if raw:
+        raw_jsonl = "\n".join(json.dumps(e, ensure_ascii=False) for e in events)
+        console.print(Syntax(raw_jsonl, "json", theme="monokai", background_color="default"))
+    else:
+        text = format_trace_text(events, full=full, max_value_chars=20000)
+        console.print(Panel.fit(text, title="🧾 Readable Trace", border_style="primary"))
 
 
 @cli.command()

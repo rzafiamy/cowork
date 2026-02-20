@@ -77,6 +77,7 @@ class ContextCompressor:
         messages: list[dict],
         system_prompt: str,
         status_cb: Optional[Callable[[str], None]] = None,
+        trace_cb: Optional[Callable[[str, dict], None]] = None,
     ) -> list[dict]:
         """
         Optimize context window. Returns compressed messages list.
@@ -86,10 +87,14 @@ class ContextCompressor:
         estimated = self._estimate_tokens(messages)
 
         if estimated <= limit:
+            if trace_cb:
+                trace_cb("context_compression_skipped", {"estimated_tokens": estimated, "limit_tokens": limit})
             return messages
 
         if status_cb:
             status_cb("🖇️  Context window full — running Map-Reduce compression...")
+        if trace_cb:
+            trace_cb("context_compression_started", {"estimated_tokens": estimated, "limit_tokens": limit})
 
         # Identify compressible history (exclude last 2 user messages)
         user_indices = [i for i, m in enumerate(messages) if m.get("role") == "user"]
@@ -111,17 +116,30 @@ class ContextCompressor:
         # Map phase: chunk and summarize (12k chars ≈ 3k tokens)
         chunks = self._smart_chunk(history_text, chunk_size=12000)
         summaries = []
-        for chunk in chunks:
+        for idx, chunk in enumerate(chunks, start=1):
             try:
+                if trace_cb:
+                    trace_cb(
+                        "context_compression_map_request",
+                        {"chunk_index": idx, "chunk_count": len(chunks), "chunk": chunk},
+                    )
                 result = await self.api_client.chat(
                     messages=[{"role": "user", "content": COMPRESS_PROMPT.format(history=chunk)}],
                     model=self.config.get("model_compress"),
                     temperature=OP_DEFAULTS["temperature_compress"],
                     max_tokens=600,
                 )
-                summaries.append(result.get("content", ""))
+                summary = result.get("content", "")
+                summaries.append(summary)
+                if trace_cb:
+                    trace_cb(
+                        "context_compression_map_response",
+                        {"chunk_index": idx, "summary": summary, "finish_reason": result.get("finish_reason", "stop")},
+                    )
             except Exception:
                 summaries.append(chunk[:500] + "... [truncated]")
+                if trace_cb:
+                    trace_cb("context_compression_map_error", {"chunk_index": idx})
 
         # Reduce phase: combine summaries
         combined = "\n\n".join(summaries)
@@ -192,6 +210,7 @@ class GeneralPurposeAgent:
         status_callback: Optional[Callable[[str], None]] = None,
         stream_callback: Optional[Callable[[str], None]] = None,
         confirmation_callback: Optional[Callable[[str, str, dict], Any]] = None,
+        trace_callback: Optional[Callable[[str, dict], None]] = None,
     ) -> None:
         self.api_client = api_client
         self.config = config
@@ -201,6 +220,7 @@ class GeneralPurposeAgent:
         self.status_cb = status_callback or (lambda msg: None)
         self.stream_cb = stream_callback or (lambda token: None)
         self.confirm_cb = confirmation_callback
+        self.trace_cb = trace_callback or (lambda _event, _data: None)
 
         self.router = MetaRouter(api_client, config.get("model_router", "gpt-4o-mini"))
         self.compressor = ContextCompressor(api_client, config)
@@ -269,6 +289,21 @@ class GeneralPurposeAgent:
         """
         import datetime as dt
         trace = AgentTrace(job_id=job.job_id)
+        self.trace_cb(
+            "turn_started",
+            {
+                "job_id": job.job_id,
+                "session_id": session.session_id,
+                "action_mode": action_mode or {},
+                "config": {
+                    "max_steps": self.config.get("max_steps", OP_DEFAULTS["max_steps"]),
+                    "max_total_tool_calls": self.config.get("max_total_tool_calls", OP_DEFAULTS["max_total_tool_calls"]),
+                    "max_tool_calls_per_step": self.config.get("max_tool_calls_per_step", OP_DEFAULTS["max_tool_calls_per_step"]),
+                    "tool_output_limit_tokens": self.config.get("tool_output_limit_tokens", OP_DEFAULTS["tool_output_limit_tokens"]),
+                    "context_limit_tokens": self.config.get("context_limit_tokens", OP_DEFAULTS["context_limit_tokens"]),
+                },
+            },
+        )
         max_steps = self.config.get("max_steps", OP_DEFAULTS["max_steps"])
         max_tool_calls = self.config.get("max_total_tool_calls", OP_DEFAULTS["max_total_tool_calls"])
         total_tool_calls = 0
@@ -276,6 +311,7 @@ class GeneralPurposeAgent:
         # ── Phase 1: Input Gatekeeper ─────────────────────────────────────────
         self.status_cb("🛡️  Phase 1 · Input Gatekeeper...")
         processed_input = self._gatekeeper(user_input, session)
+        self.trace_cb("gatekeeper_result", {"user_input": user_input, "processed_input": processed_input})
         trace.add_step("gatekeeper", {"original_len": len(user_input), "processed_len": len(processed_input)})
 
         # ── Phase 2: Meta-Routing (Brain) ─────────────────────────────────────
@@ -286,6 +322,7 @@ class GeneralPurposeAgent:
             routing_info = {"categories": categories, "confidence": 1.0, "reasoning": "Action mode"}
         else:
             self.status_cb("🧭  Phase 2 · Meta-Routing intent classification...")
+            self.trace_cb("router_request", {"prompt": processed_input})
             routing_info = await self.router.classify(processed_input)
             categories = routing_info["categories"]
             display = self.router.get_category_display(categories)
@@ -296,15 +333,25 @@ class GeneralPurposeAgent:
             categories = list(categories) + ["SESSION_SCRATCHPAD"]
 
         trace.add_step("routing", routing_info)
+        self.trace_cb("router_response", routing_info)
         trace.categories = categories
         job.categories = categories
 
         # ── Memory Context Retrieval ───────────────────────────────────────────
         self.status_cb("🧠  Retrieving memory context...")
         memory_context = self.memoria.get_fused_context(processed_input)
+        self.trace_cb("memory_context", {"memory_context": memory_context})
 
         # ── Build Tool Schema (Filters out unconfigured paid tools) ───────────
         tools_schema = get_available_tools_for_categories(categories)
+        self.trace_cb(
+            "tools_schema_selected",
+            {
+                "categories": categories,
+                "tool_names": [t["function"]["name"] for t in tools_schema],
+                "tools_schema": tools_schema,
+            },
+        )
 
         if tools_schema:
             premium_tools = [t["function"]["name"] for t in tools_schema if t["category"] in categories and t["category"] != "CONVERSATIONAL"]
@@ -328,6 +375,14 @@ class GeneralPurposeAgent:
             *chat_history,
             {"role": "user", "content": processed_input},
         ]
+        self.trace_cb(
+            "initial_messages_built",
+            {
+                "system_prompt": system_prompt,
+                "chat_history_count": len(chat_history),
+                "messages": messages,
+            },
+        )
 
         # ── Phase 3: REACT Loop ───────────────────────────────────────────────
         self.status_cb("🤖  Phase 3 · REACT Execution Loop...")
@@ -338,7 +393,7 @@ class GeneralPurposeAgent:
 
         for step in range(max_steps):
             # Context compression check
-            messages = await self.compressor.optimize(messages, system_prompt, self.status_cb)
+            messages = await self.compressor.optimize(messages, system_prompt, self.status_cb, self.trace_cb)
 
             self.status_cb(f"🔄  Step {step + 1}/{max_steps} · Reasoning...")
             trace.add_step("react_step_start", {"step": step + 1})
@@ -348,6 +403,17 @@ class GeneralPurposeAgent:
                 use_stream = self.config.get("stream", True) and bool(self.stream_cb)
                 if use_stream and tools_schema:
                     # With tools: non-streaming (tools + streaming is tricky)
+                    self.trace_cb(
+                        "llm_request",
+                        {
+                            "step": step + 1,
+                            "stream": False,
+                            "model": self.config.get("model_text"),
+                            "temperature": self.config.get("temperature_agent", OP_DEFAULTS["temperature_agent"]),
+                            "messages": messages,
+                            "tools_schema": tools_schema,
+                        },
+                    )
                     result = await self.api_client.chat(
                         messages=messages,
                         model=self.config.get("model_text"),
@@ -357,6 +423,17 @@ class GeneralPurposeAgent:
                     )
                 elif use_stream and not tools_schema:
                     # Pure text: stream it
+                    self.trace_cb(
+                        "llm_request",
+                        {
+                            "step": step + 1,
+                            "stream": True,
+                            "model": self.config.get("model_text"),
+                            "temperature": self.config.get("temperature_agent", OP_DEFAULTS["temperature_agent"]),
+                            "messages": messages,
+                            "tools_schema": [],
+                        },
+                    )
                     result = await self.api_client.chat_stream(
                         messages=messages,
                         model=self.config.get("model_text"),
@@ -364,6 +441,17 @@ class GeneralPurposeAgent:
                         on_chunk=self.stream_cb,
                     )
                 else:
+                    self.trace_cb(
+                        "llm_request",
+                        {
+                            "step": step + 1,
+                            "stream": False,
+                            "model": self.config.get("model_text"),
+                            "temperature": self.config.get("temperature_agent", OP_DEFAULTS["temperature_agent"]),
+                            "messages": messages,
+                            "tools_schema": tools_schema,
+                        },
+                    )
                     result = await self.api_client.chat(
                         messages=messages,
                         model=self.config.get("model_text"),
@@ -374,11 +462,22 @@ class GeneralPurposeAgent:
             except APIError as e:
                 error_msg = f"❌ API Error: {e}"
                 trace.add_step("api_error", {"error": str(e)})
+                self.trace_cb("llm_error", {"step": step + 1, "error": str(e)})
                 return error_msg
 
             content = result.get("content", "")
             tool_calls = result.get("tool_calls", [])
             finish_reason = result.get("finish_reason", "stop")
+            self.trace_cb(
+                "llm_response",
+                {
+                    "step": step + 1,
+                    "content": content,
+                    "tool_calls": tool_calls,
+                    "finish_reason": finish_reason,
+                    "usage": result.get("usage", {}),
+                },
+            )
 
             # Append assistant message to context
             assistant_msg: dict[str, Any] = {"role": "assistant", "content": content}
@@ -422,6 +521,7 @@ class GeneralPurposeAgent:
                 async def _exec_one(tc: dict) -> dict:
                     name = tc["function"]["name"]
                     raw_args = tc["function"].get("arguments", {})
+                    self.trace_cb("tool_call_received", {"step": step + 1, "name": name, "raw_args": raw_args, "tool_call": tc})
                     if isinstance(raw_args, str):
                         try:
                             raw_args = json.loads(raw_args)
@@ -433,11 +533,25 @@ class GeneralPurposeAgent:
                             }
 
                     ok, resolved_args, err = self.gateway.validate_and_resolve(name, raw_args)
+                    self.trace_cb(
+                        "tool_call_validated",
+                        {
+                            "step": step + 1,
+                            "name": name,
+                            "ok": ok,
+                            "resolved_args": resolved_args if ok else {},
+                            "error": "" if ok else err,
+                        },
+                    )
                     if not ok:
                         return {"tool_call_id": tc["id"], "role": "tool", "content": err}
 
                     # ── Firewall Check ──
                     action, reason = self.firewall.check(name, resolved_args)
+                    self.trace_cb(
+                        "tool_firewall_decision",
+                        {"step": step + 1, "name": name, "action": action, "reason": reason, "args": resolved_args},
+                    )
                     
                     if action == FirewallAction.BLOCK:
                         self.status_cb(f"🛡️  Firewall BLOCKED: {name} ({reason})")
@@ -466,6 +580,10 @@ class GeneralPurposeAgent:
                         None, self.executor.execute, name, resolved_args
                     )
                     trace.add_step("tool_execution_result", {"name": name, "args": resolved_args, "result": result_str})
+                    self.trace_cb(
+                        "tool_execution_result",
+                        {"step": step + 1, "name": name, "args": resolved_args, "result": result_str},
+                    )
                     return {"tool_call_id": tc["id"], "role": "tool", "content": result_str}
 
                 tool_results = await asyncio.gather(*[_exec_one(tc) for tc in calls_this_step])
@@ -477,6 +595,7 @@ class GeneralPurposeAgent:
             # ── No more tool calls — we have a final answer ───────────────────
             final_response = content
             trace.add_step("final_answer", {"length": len(content), "finish_reason": finish_reason})
+            self.trace_cb("final_answer", {"content": final_response, "finish_reason": finish_reason, "step": step + 1})
             break
 
         # ── Step-limit recovery ───────────────────────────────────────────────
@@ -505,6 +624,7 @@ class GeneralPurposeAgent:
                     max_tokens=1024,
                 )
                 final_response = limit_result.get("content", "").strip()
+                self.trace_cb("step_limit_self_assessment_response", {"content": final_response})
             except Exception as e:
                 final_response = (
                     f"⚠️ I reached the maximum step limit ({max_steps} steps) without fully completing your request. "
@@ -513,13 +633,23 @@ class GeneralPurposeAgent:
                 )
 
         trace.finish()
+        self.trace_cb(
+            "trace_summary",
+            {
+                "steps": trace.steps,
+                "total_tool_calls": trace.total_tool_calls,
+                "elapsed_seconds": trace.elapsed_seconds,
+            },
+        )
         job.steps = len([s for s in trace.steps if s["type"] == "react_step_start"])
         job.tool_calls = trace.total_tool_calls
         job.tool_calls_list = getattr(trace, "all_tool_calls_executed", [])
 
         # ── Phase 5: Memory Update ───────────────────────────────────────────
         self.status_cb("🚀  Phase 5 · Memory ingestion...")
+        self.trace_cb("memory_update_request", {"user_input": user_input, "assistant_response": final_response})
         await self.memoria.update(user_input, final_response)
+        self.trace_cb("memory_update_done", {})
 
         return final_response
 

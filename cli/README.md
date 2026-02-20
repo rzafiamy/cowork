@@ -38,6 +38,8 @@ The REACT loop runs for up to `max_steps` (default: 15) iterations. At the limit
 
 ## 🚀 Quick Start
 
+Full command catalog: `docs/CLI_REFERENCE.md`
+
 ### Install
 
 ```bash
@@ -66,6 +68,9 @@ export COWORK_API_ENDPOINT=https://api.openai.com/v1
 cowork              # Interactive chat (default)
 cowork chat         # Same as above
 cowork run "Research the latest AI news"   # One-shot non-interactive
+cowork chat --trace                        # Persist full workflow trace for each turn
+cowork run "..." --trace                   # Persist full workflow trace for this run
+cowork trace                               # Read latest trace in readable timeline
 cowork ping         # Test API connectivity
 cowork sessions     # List all sessions
 cowork jobs         # Sentinel job dashboard
@@ -90,6 +95,9 @@ cowork config       # Show configuration
 | `/config set <key> <value>` | Update a config value |
 | `/scratchpad` | List scratchpad entries |
 | `/trace` | Show last job trace (step-by-step) |
+| `/trace full` | Show full readable trace payloads |
+| `/trace raw` | Show raw JSON trace events |
+| `/trace path` | Show current trace file path |
 | `/workspace` | Show workspace session files |
 | `/clear` | Clear the terminal |
 | `/exit` | Exit |
@@ -238,3 +246,16 @@ Example flow: `document_create_pdf` → returns path → pass to `smtp_send_emai
 ---
 
 *Built with ❤️ on the Makix Enterprise Agentic Architecture*
+## 🧾 Workflow Trace Logging
+
+Enable detailed trace logging when running `cowork`:
+
+- `cowork chat --trace`
+- `cowork run "..." --trace`
+- Disable explicitly with `--no-trace`
+- Set default with `/config set show_trace true`
+
+Each run writes a JSONL trace containing full agent workflow events:
+
+- If session has a workspace folder: `~/.cowork/workspace/<session-slug>/traces/*.jsonl`
+- Otherwise: `~/.cowork/traces/<session_id>/*.jsonl`
