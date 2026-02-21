@@ -41,12 +41,44 @@ class MetaRouter:
     def _estimate_tool_probability(self, prompt: str) -> float:
         p = prompt.lower()
         action_terms = [
-            "search", "look up", "find", "latest", "today", "current",
-            "scrape", "crawl", "send", "email", "post", "tweet",
-            "create", "generate", "build", "write file", "save", "store",
-            "schedule", "book", "calendar", "weather", "news", "price",
-            "website", "landing page", "frontend", "backend", "ui", "ux",
-            "code", "coding", "#coding", "#code", "#web",
+            # English - Search & Info
+            "search", "find", "look up", "who is", "what is", "where is", "when did", "latest", "today", "current",
+            "news", "weather", "forecast", "temperature", "rain", "snow", "wind", "storm", "price", "stock", "crypto",
+            "exchange rate", "calculate", "math", "convert", "formula", "equation", "map", "location", "address",
+            # English - Web & Communication
+            "scrape", "crawl", "website", "url", "extract", "fetch", "send", "email", "gmail", "mail", "message",
+            "post", "tweet", "slack", "telegram", "whatsapp", "linkedin", "browse", "visit", "link",
+            # English - Creation & Files
+            "create", "generate", "build", "write", "save", "store", "file", "document", "pdf", "docx", "xlsx", "pptx",
+            "csv", "json", "xml", "txt", "log", "scratchpad", "remember", "note", "artifact", "workspace",
+            # English - Productivity & Coding
+            "schedule", "book", "calendar", "event", "meeting", "reminder", "task", "todo", "kanban", "cron",
+            "code", "coding", "python", "javascript", "typescript", "react", "html", "css", "github", "repo",
+            "git ", "branch", "commit", "push", "pull", "bug", "fix", "refactor", "implement", "deploy", "server",
+            "backend", "frontend", "api", "endpoint", "database", "sql", "query", "docker", "container", "linux", "terminal",
+            # English - Media & Multimodal
+            "image", "picture", "photo", "draw", "video", "youtube", "yt ", "audio", "transcribe", "stt", "tts",
+            "vision", "describe", "analyze", "ocr", "diagram", "chart",
+            # French - Recherche & Info
+            "chercher", "trouver", "qui est", "c'est quoi", "où est", "quand", "dernier", "aujourd'hui", "actuel",
+            "nouvelles", "infos", "actualités", "météo", "prévision", "température", "pluie", "neige", "vent", "orage",
+            "soleil", "nuage", "froid", "chaud", "humide", "prix", "bourse", "cours de", "calculer", "maths", "convertir",
+            "formule", "équation", "carte", "adresse", "journal", "presse",
+            # French - Web & Communication
+            "extraire", "récupérer", "site web", "lien", "url", "envoyer", "courriel", "mail", "message", "poster",
+            "tweeter", "discuter", "naviguer", "parcourir",
+            # French - Création & Fichiers
+            "créer", "générer", "construire", "écrire", "sauvegarder", "enregistrer", "fichier", "document", "note",
+            "mémo", "rappelle", "souviens",
+            # French - Productivité & Coding
+            "organiser", "réserver", "calendrier", "agenda", "événement", "reunion", "rappel", "tâche", "liste",
+            "code", "coder", "programmer", "programmation", "développement", "débugger", "corriger", "réparer",
+            "implémenter", "déployer", "serveur", "base de données", "requête", "terminal", "ligne de commande",
+            # French - Média & Multimodal
+            "photo", "vidéo", "audio", "transcrire", "dessiner", "vision", "décrire", "analyser", "graphique",
+            "synthèse vocale", "image",
+            # Special tags
+            "#code", "#coding", "#web", "#search",
         ]
         has_action = any(t in p for t in action_terms)
         long_turn = len(prompt) > 180
@@ -188,77 +220,67 @@ class MetaRouter:
         p = prompt.lower()
         categories = []
 
-        # External tool keywords (checked first for specificity)
-        if any(w in p for w in ["youtube", "yt ", "video transcript", "youtube search", "youtube metadata"]):
+        # YouTube & Media
+        if any(w in p for w in ["youtube", "yt ", "video transcript", "audio", "vidéo", "transcrire", "speech", "synthèse vocale"]):
             categories.append("YOUTUBE_TOOLS")
-        if any(w in p for w in ["google search", "serpapi", "brave search", "search google"]):
+        
+        # Search & Info
+        if any(w in p for w in ["google search", "serpapi", "brave search", "search google", "chercher", "trouver", "recherche"]):
             categories.append("SEARCH_TOOLS")
-        if any(w in p for w in ["firecrawl", "scrape", "crawl", "website content", "extract from url"]):
+        
+        # Web & Scraping
+        if any(w in p for w in ["firecrawl", "scrape", "crawl", "website content", "extract", "website", "site web", "extraire", "lien"]):
             categories.append("WEB_TOOLS")
-        if any(w in p for w in ["news", "headlines", "breaking news", "newsapi", "latest news"]):
+        
+        # News
+        if any(w in p for w in ["news", "headlines", "newsapi", "actualités", "nouvelles", "infos"]):
             categories.extend(["NEWS_TOOLS", "SEARCH_TOOLS"])
-        if any(w in p for w in ["github", "repository", "open source", "code search", "pull request", "issue"]):
-            categories.append("CODING_TOOLS")
+        
+        # Coding (Global)
         if any(w in p for w in [
             "codebase", "source code", "refactor", "debug", "bug fix", "implement", "write code",
             "python", "javascript", "typescript", "react", "next.js", "django", "flask",
             "fastapi", "frontend", "backend", "api endpoint", "unit test", "web app",
+            "coder", "programmer", "programmation", "développement", "débugger", "corrigé", "implémenter",
         ]):
             categories.append("CODING_TOOLS")
-        if any(w in p for w in ["weather", "forecast", "temperature", "humidity", "openweather", "rain", "snow", "wind"]):
+        
+        # Weather
+        if any(w in p for w in ["weather", "forecast", "temperature", "météo", "prévision", "température", "pluie", "neige"]):
             categories.append("WEATHER_TOOLS")
-        if any(w in p for w in ["movie", "film", "tv show", "series", "tmdb", "cast", "director", "imdb", "actor", "actress"]):
-            categories.append("MEDIA_TOOLS")
-        if any(w in p for w in ["wikipedia", "wiki article", "encyclopedia", "who was", "what is the history"]):
-            categories.append("KNOWLEDGE_TOOLS")
-        if any(w in p for w in ["email", "smtp", "telegram", "slack", "whatsapp", "twitter", "tweet", "post to x", "message", "send to", "gmail"]):
-            categories.extend(["COMMUNICATION_TOOLS", "GOOGLE_TOOLS"])
-        if any(w in p for w in ["google calendar", "google drive", "gmail", "gdrive", "calendar event", "upload to drive", "create event"]):
-            categories.append("GOOGLE_TOOLS")
-        if any(w in p for w in ["linkedin", "professional profile"]):
-            categories.append("SOCIAL_TOOLS")
-
-        # Multi-modal intent keywords
+        
+        # Multi-modal
         if any(w in p for w in [
-            "generate image", "image generation", "create image", "dall-e", "dalle",
-            "stable diffusion", "text to image", "make a picture", "draw",
-            "transcribe", "speech to text", "stt", "asr", "whisper", "audio transcription",
-            "convert audio", "audio to text",
-            "text to speech", "tts", "synthesize speech", "read aloud", "speak",
-            "vision", "describe image", "analyze image", "ocr", "image analysis",
-            "look at this image", "what is in this", "what does this image",
+            "generate image", "create image", "dall-e", "stable diffusion", "make a picture", "draw",
+            "transcribe", "stt", "tts", "vision", "describe image", "analyze image", "ocr",
+            "générer image", "créer image", "dessiner", "décrire image", "analyser image",
         ]):
             categories.append("MULTIMODAL_TOOLS")
 
-        # Built-in tool keywords
-        if not categories:
-            if any(w in p for w in ["search", "find", "look up", "what is", "who is", "when did", "weather"]):
-                categories.append("SEARCH_AND_INFO")
-            if any(w in p for w in ["calculate", "compute", "math", "formula", "equation", "time", "date", "diagram", "chart"]):
-                categories.append("DATA_AND_UTILITY")
-            if any(w in p for w in ["save", "store", "remember", "scratchpad", "ref:"]):
-                categories.append("SESSION_SCRATCHPAD")
-            if any(w in p for w in ["workspace", "artifact", "write file", "save file", "session note", "context.md"]):
-                categories.append("WORKSPACE_TOOLS")
-            if any(w in p for w in ["code", "function", "class", "module", "repo", "project file"]):
-                categories.append("CODING_TOOLS")
-            if any(w in p for w in ["note", "task", "kanban", "calendar", "event", "file", "write"]):
-                categories.append("APP_CONNECTORS")
-            if any(w in p for w in ["cron", "schedule", "remind me", "every day", "daily", "weekly", "tomorrow at"]):
-                categories.append("CRON_TOOLS")
-            if any(w in p for w in ["image", "picture", "photo", "movie"]):
-                categories.append("MEDIA_AND_ENTERTAINMENT")
-            if any(w in p for w in ["analyze", "look at", "describe", "vision", "ocr"]):
-                categories.append("VISION")
+        # Communication & Google
+        if any(w in p for w in [
+            "email", "smtp", "telegram", "slack", "whatsapp", "twitter", "tweet", "message", "send", "gmail",
+            "courriel", "mail", "envoyer", "poster"
+        ]):
+            categories.extend(["COMMUNICATION_TOOLS", "GOOGLE_TOOLS"])
+        
+        if any(w in p for w in ["google calendar", "google drive", "gmail", "gdrive", "calendar event", "upload", "agenda", "calendrier"]):
+            categories.append("GOOGLE_TOOLS")
+
+        # Workspace & Scratchpad
+        if any(w in p for w in ["save", "store", "remember", "scratchpad", "sauvegarder", "enregistrer", "souviens", "rappelle"]):
+            categories.append("SESSION_SCRATCHPAD")
+        if any(w in p for w in ["workspace", "artifact", "write file", "save file", "fichier", "écrire"]):
+            categories.append("WORKSPACE_TOOLS")
 
         if not categories:
-            # Check if it's conversational
-            if any(w in p for w in ["hello", "hi", "hey", "thanks", "thank you", "how are you", "what do you think"]):
+            # General fallbacks
+            if any(w in p for w in ["hello", "hi", "hey", "thanks", "thank you", "bonjour", "salut", "merci"]):
                 categories = ["CONVERSATIONAL"]
             else:
                 categories = ["ALL_TOOLS"]
 
-        return {"categories": categories, "confidence": 0.6, "reasoning": "Keyword-based fallback routing"}
+        return {"categories": categories, "confidence": 0.6, "reasoning": "Keyword-based fallback routing (bilingual update)"}
 
     def get_category_display(self, categories: list[str]) -> str:
         """Get a display string for the classified categories."""

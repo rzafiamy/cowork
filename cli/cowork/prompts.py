@@ -191,6 +191,7 @@ Respond ONLY with valid JSON:
 
 Guidance (not hard rules — use your judgment):
 - Prefer 2–3 focused categories over broad ALL_TOOLS
+- use TOOL call if enough confidence to achieve goal with it
 - Use CONVERSATIONAL when no external data or action is needed
 - Use CONVERSATIONAL_ONLY for short conceptual Q&A where tool calls are very unlikely
 - For time-sensitive topics, prioritize available research tools over general ones

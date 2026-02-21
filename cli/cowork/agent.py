@@ -277,25 +277,6 @@ class GeneralPurposeAgent:
         self.executor = ToolExecutor(scratchpad, config, status_callback=self.status_cb)
         self.firewall = FirewallManager()
 
-    def _is_simple_conversational_turn(self, text: str) -> bool:
-        """
-        Heuristic fast-path:
-        short conceptual questions with no obvious action/external-data verbs.
-        """
-        t = text.strip().lower()
-        if not t or len(t) > 220:
-            return False
-        action_verbs = [
-            "search", "find", "look up", "latest", "today", "current", "news",
-            "weather", "price", "stock", "scrape", "crawl", "fetch", "download",
-            "send", "email", "post", "publish", "save", "store", "schedule",
-            "book", "create file", "write file", "build", "develop", "implement",
-            "website", "landing page", "frontend", "backend", "#coding", "#code",
-        ]
-        if any(v in t for v in action_verbs):
-            return False
-        return "?" in t or len(t.split()) <= 20
-
     def _strip_nonlimit_status_banner(self, text: str) -> str:
         """
         Remove GOAL banner if the model emits it on a normal non-limit turn.
@@ -593,15 +574,6 @@ class GeneralPurposeAgent:
                 "reasoning": "Action mode",
                 "tool_probability": 1.0,
             }
-        elif self._is_simple_conversational_turn(processed_input):
-            categories = ["CONVERSATIONAL_ONLY"]
-            routing_info = {
-                "categories": categories,
-                "confidence": 0.95,
-                "reasoning": "Fast-path conversational turn (skipped full router).",
-                "tool_probability": 0.1,
-            }
-            self.status_cb("⚡ Fast-path: conversational-only turn.")
         else:
             self.status_cb("🧭  Phase 2 · Meta-Routing intent classification...")
             self.trace_cb("router_request", {"prompt": processed_input})
@@ -832,6 +804,7 @@ class GeneralPurposeAgent:
                             return {
                                 "tool_call_id": tc["id"],
                                 "role": "tool",
+                                "name": name,
                                 "content": f"{GATEWAY_ERROR_PREFIX} Invalid JSON arguments. [HINT]: Correct the JSON syntax.",
                             }
 
@@ -847,7 +820,7 @@ class GeneralPurposeAgent:
                         },
                     )
                     if not ok:
-                        return {"tool_call_id": tc["id"], "role": "tool", "content": err}
+                        return {"tool_call_id": tc["id"], "role": "tool", "name": name, "content": err}
 
                     # ── Firewall Check ──
                     action, reason = self.firewall.check(name, resolved_args)
@@ -861,6 +834,7 @@ class GeneralPurposeAgent:
                         return {
                             "tool_call_id": tc["id"],
                             "role": "tool",
+                            "name": name,
                             "content": f"🛡️ [FIREWALL BLOCK] This tool call was rejected by the system policy: {reason}",
                         }
                     
@@ -876,6 +850,7 @@ class GeneralPurposeAgent:
                             return {
                                 "tool_call_id": tc["id"],
                                 "role": "tool",
+                                "name": name,
                                 "content": "🛡️ [FIREWALL CANCEL] Tool execution cancelled by the user.",
                             }
 
@@ -888,7 +863,7 @@ class GeneralPurposeAgent:
                         "tool_execution_result",
                         {"step": step + 1, "name": name, "args": resolved_args, "result": result_str},
                     )
-                    return {"tool_call_id": tc["id"], "role": "tool", "content": result_str}
+                    return {"tool_call_id": tc["id"], "role": "tool", "name": name, "content": result_str}
 
                 tool_results = await asyncio.gather(*[_exec_one(tc) for tc in calls_this_step])
                 messages.extend(tool_results)
