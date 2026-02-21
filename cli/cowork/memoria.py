@@ -376,16 +376,38 @@ class Memoria:
     # ── Write Path ────────────────────────────────────────────────────────────
 
     def _is_durable_memory_candidate(self, user_message: str) -> bool:
-        text = user_message.strip().lower()
+        text = user_message.strip()
         if not text:
             return False
+        if text.startswith("/"):
+            return False
+
+        lowered = text.lower()
         patterns = [
+            # English
             r"\bi am\b", r"\bmy name is\b", r"\bi live in\b", r"\bi work as\b",
             r"\bi prefer\b", r"\bi like\b", r"\bi dislike\b", r"\balways\b", r"\bnever\b",
             r"\bmy goal is\b", r"\bi'm working on\b", r"\bwe are building\b",
             r"\bremember\b", r"\bsave this\b", r"\bfor future\b",
+            # French
+            r"\bje suis\b", r"\bmon nom est\b", r"\bj'habite\b", r"\bje travaille\b",
+            r"\bje prefere\b", r"\bje préfère\b", r"\bj'aime\b", r"\bje n'aime pas\b",
+            r"\bmon objectif\b", r"\bje travaille sur\b", r"\bnous construisons\b",
+            r"\brappelle\b", r"\bsauvegarde\b", r"\benregistre\b", r"\bpour plus tard\b",
         ]
-        return any(re.search(p, text) for p in patterns)
+        if any(re.search(p, lowered) for p in patterns):
+            return True
+
+        # Default to persisting substantial turns to avoid dropping useful long-term facts.
+        words = re.findall(r"[a-zA-Z0-9_]+", lowered)
+        if len(words) >= 6:
+            return True
+
+        # Ignore tiny social noise.
+        trivial = {"ok", "okay", "thanks", "thank", "merci", "bonjour", "salut", "hello", "hi", "hey"}
+        if words and all(w in trivial for w in words):
+            return False
+        return False
 
     async def update(self, user_message: str, assistant_response: str) -> None:
         """

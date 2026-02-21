@@ -297,16 +297,33 @@ class GeneralPurposeAgent:
         """
         Persist only durable preference/profile/project-state messages.
         """
-        text = user_input.strip().lower()
+        text = user_input.strip()
         if not text:
             return False
+        if text.startswith("/"):
+            return False
+
+        lowered = text.lower()
         durable_patterns = [
+            # English
             r"\bi am\b", r"\bmy name is\b", r"\bi live in\b", r"\bi work as\b",
             r"\bi prefer\b", r"\bi like\b", r"\bi dislike\b", r"\balways\b", r"\bnever\b",
             r"\bmy goal is\b", r"\bi'm working on\b", r"\bwe are building\b",
             r"\bremember\b", r"\bsave this\b", r"\bfor future\b", r"\bimportant\b", r"\bnote this\b",
+            # French
+            r"\bje suis\b", r"\bmon nom est\b", r"\bj'habite\b", r"\bje travaille\b",
+            r"\bje prefere\b", r"\bje préfère\b", r"\bj'aime\b", r"\bje n'aime pas\b",
+            r"\bmon objectif\b", r"\bje travaille sur\b", r"\bnous construisons\b",
+            r"\brappelle\b", r"\bsauvegarde\b", r"\benregistre\b", r"\bpour plus tard\b",
         ]
-        return any(re.search(p, text) for p in durable_patterns)
+        if any(re.search(p, lowered) for p in durable_patterns):
+            return True
+
+        # Fallback: persist substantive user turns by default so memory is not too restrictive.
+        words = re.findall(r"[a-zA-Z0-9_]+", lowered)
+        if len(words) >= 6:
+            return True
+        return False
 
     def _make_meaningful_ref_key(self, user_input: str) -> str:
         """
