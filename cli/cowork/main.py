@@ -89,6 +89,18 @@ _ai_profiles = AIProfileManager(_config)
 _last_trace: Optional[dict] = None
 _last_job: Optional[AgentJob] = None
 
+def _get_memory_user_id() -> str:
+    """
+    Return a stable memory identity persisted in config.
+    Avoid coupling long-term memory to the current API key.
+    """
+    existing = str(_config.get("memory_user_id", "") or "").strip()
+    if existing:
+        return existing
+    generated = str(uuid.uuid4())
+    _config.set("memory_user_id", generated)
+    return generated
+
 
 def _verify_firewall_integrity() -> None:
     """
@@ -346,7 +358,7 @@ async def _background_cron_poll():
                     session = Session(title=f"Cron: {job.job_id}")
                 
                 scratchpad = Scratchpad(session.session_id)
-                user_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, _config.api_key or "anonymous"))
+                user_id = _get_memory_user_id()
                 memoria = Memoria(user_id, session.session_id, api_client, _config)
 
                 response, _ = await run_agent_turn(
@@ -939,7 +951,7 @@ async def interactive_loop(
         scratchpad._load_index()
     else:
         scratchpad = Scratchpad(session.session_id)
-    user_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, _config.api_key or "anonymous"))
+    user_id = _get_memory_user_id()
     _memoria = Memoria(user_id, session.session_id, api_client, _config)
 
     sessions_list = Session.list_all()
@@ -1142,7 +1154,7 @@ def run(prompt: str, session_id: Optional[str], model: Optional[str], no_stream:
 
     api_client = _make_api_client()
     scratchpad = Scratchpad(session.session_id)
-    user_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, _config.api_key or "anonymous"))
+    user_id = _get_memory_user_id()
     memoria = Memoria(user_id, session.session_id, api_client, _config)
 
     render_user_message(prompt)
@@ -1202,7 +1214,7 @@ def memory() -> None:
         render_error("Not configured.")
         return
     api_client = _make_api_client()
-    user_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, _config.api_key or "anonymous"))
+    user_id = _get_memory_user_id()
     mem = Memoria(user_id, "status_check", api_client, _config)
     render_memory_status(mem.get_triplet_count(), mem.get_summary())
 
@@ -1519,7 +1531,7 @@ def run_pending(interactive: bool) -> None:
                     session = Session(title=f"Cron: {job.job_id}")
                 
                 scratchpad = Scratchpad(session.session_id)
-                user_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, _config.api_key or "anonymous"))
+                user_id = _get_memory_user_id()
                 memoria = Memoria(user_id, session.session_id, api_client, _config)
 
                 response, _ = await run_agent_turn(
