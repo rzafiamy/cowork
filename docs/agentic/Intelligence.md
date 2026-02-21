@@ -8,13 +8,12 @@ This document details the cognitive strategies used to maximize accuracy while m
 To prevent "Tool Fatigue" and context noise, we implement a **Dynamic Schema** strategy powered by a dedicated Router agent.
 
 ### 🚦 The Logic Flow (Current)
-1.  **⚡ Local Fast-Path Check**: For short conceptual turns, the agent routes directly to `CONVERSATIONAL_ONLY`.
-2.  **🔍 Router Classification**: If not fast-pathed, run a **T=0.0** routing call with JSON output.
-3.  **🎚️ Tool-Need Calibration**: Apply a probability gate; low tool-need can force `CONVERSATIONAL_ONLY`.
-4.  **🎯 Just-In-Time Tool Schema**:
+1.  **🔍 Router Classification**: Run a **T=0.0** routing call with JSON output.
+2.  **🧯 Fallback Routing**: If the routing call fails or JSON parsing fails, use keyword fallback.
+3.  **🎯 Just-In-Time Tool Schema**:
     *   `CONVERSATIONAL_ONLY` ⮕ no tool schema.
     *   Tool-capable routes ⮕ filtered tool schema.
-5.  **🧩 Prompt Mode Selection**:
+4.  **🧩 Prompt Mode Selection**:
     *   Chat prompt for conversational-only.
     *   Workflow prompt for multi-step/tool turns.
 
@@ -42,9 +41,6 @@ To prevent "Tool Fatigue" and context noise, we implement a **Dynamic Schema** s
 ```mermaid
 graph TD
     A["👤 User Prompt"] --> B{"🧭 Meta-Router"}
-    A --> X{"⚡ Local Fast-Path?"}
-    X -- "Yes" --> C["💭 CONVERSATIONAL_ONLY"]
-    X -- "No" --> B
     B -- "Hello" --> C
     B -- "Research AI" --> D["🌍 Load SEARCH Tools"]
     B -- "Analyze Image" --> E["👁️ Load VISION Tools"]

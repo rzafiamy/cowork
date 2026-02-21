@@ -25,14 +25,11 @@ This document traces the path of a user request from the moment it leaves the ke
 ## 🔵 Phase 3: The Brain (Meta-Routing)
 *Components: `cli/cowork/agent.py` ⮕ `cli/cowork/router.py`*
 
-1.  **⚡ Fast-Path Detection**: Short conceptual turns can skip full router and route directly to `CONVERSATIONAL_ONLY`.
-2.  **🧭 Intent Discovery**: If not fast-pathed, run lightweight classification at **Temp 0.0**.
+1.  **🧭 Intent Discovery**: Run lightweight classification at **Temp 0.0**.
+2.  **🧯 Fallback Routing**: If routing/model parsing fails, use keyword fallback categories.
 3.  **🛠️ Schema Pruning**:
     *   `CONVERSATIONAL_ONLY` ⮕ no tool schema construction.
     *   Tool-capable turns ⮕ filter to relevant categories.
-4.  **🎚️ Router Calibration**:
-    *   A tool-need probability score can downgrade a broad route to `CONVERSATIONAL_ONLY`.
-    *   📉 Reduces unnecessary orchestration and latency.
 
 ## 🟣 Phase 4: The Worker (REACT Loop)
 *Components: `cli/cowork/agent.py` (`GeneralPurposeAgent` + `ContextCompressor`)*

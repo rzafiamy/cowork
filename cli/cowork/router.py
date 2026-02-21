@@ -91,6 +91,68 @@ class MetaRouter:
             return 0.25
         return 0.4
 
+    def _normalize_category(self, raw: str, domains: list[str]) -> Optional[str]:
+        """Map loose model labels (e.g. WEATHER) to canonical category names."""
+        if not isinstance(raw, str):
+            return None
+
+        token = raw.strip().upper().replace("-", "_").replace(" ", "_")
+        if not token:
+            return None
+
+        if token in domains:
+            return token
+
+        alias_map = {
+            "WEATHER": "WEATHER_TOOLS",
+            "FORECAST": "WEATHER_TOOLS",
+            "PREDICTION": "WEATHER_TOOLS",
+            "SEARCH": "SEARCH_TOOLS",
+            "WEB": "WEB_TOOLS",
+            "NEWS": "NEWS_TOOLS",
+            "YOUTUBE": "YOUTUBE_TOOLS",
+            "KNOWLEDGE": "KNOWLEDGE_TOOLS",
+            "MEDIA": "MEDIA_TOOLS",
+            "SOCIAL": "SOCIAL_TOOLS",
+            "GOOGLE": "GOOGLE_TOOLS",
+            "COMMUNICATION": "COMMUNICATION_TOOLS",
+            "CODING": "CODING_TOOLS",
+            "DOCUMENT": "DOCUMENT_TOOLS",
+            "MULTIMODAL": "MULTIMODAL_TOOLS",
+            "WORKSPACE": "WORKSPACE_TOOLS",
+            "SCRATCHPAD": "SESSION_SCRATCHPAD",
+            "UTILITY": "DATA_AND_UTILITY",
+            "DATA": "DATA_AND_UTILITY",
+            "CONVERSATION": "CONVERSATIONAL",
+            "CHAT": "CONVERSATIONAL",
+        }
+
+        mapped = alias_map.get(token)
+        if mapped and mapped in domains:
+            return mapped
+
+        # Soft contains-based rescue for labels like "WEATHER_DATA" or "WEB_SEARCH".
+        contains_rules = [
+            ("WEATHER", "WEATHER_TOOLS"),
+            ("FORECAST", "WEATHER_TOOLS"),
+            ("SEARCH", "SEARCH_TOOLS"),
+            ("NEWS", "NEWS_TOOLS"),
+            ("WEB", "WEB_TOOLS"),
+            ("YOUTUBE", "YOUTUBE_TOOLS"),
+            ("CODE", "CODING_TOOLS"),
+            ("DOC", "DOCUMENT_TOOLS"),
+            ("MEDIA", "MEDIA_TOOLS"),
+            ("SOCIAL", "SOCIAL_TOOLS"),
+            ("GOOGLE", "GOOGLE_TOOLS"),
+            ("COMM", "COMMUNICATION_TOOLS"),
+            ("SCRATCH", "SESSION_SCRATCHPAD"),
+        ]
+        for needle, canonical in contains_rules:
+            if needle in token and canonical in domains:
+                return canonical
+
+        return None
+
     async def classify(self, prompt: str) -> dict:
         """
         Classify the user's intent.
@@ -137,7 +199,7 @@ class MetaRouter:
                 model=self.model,
                 temperature=OP_DEFAULTS["temperature_router"],
                 response_format={"type": "json_object"},
-                max_tokens=200,
+                max_tokens=320,
             )
         except Exception as e1:
             first_error = e1
@@ -150,7 +212,7 @@ class MetaRouter:
                     messages=messages,
                     model=self.model,
                     temperature=OP_DEFAULTS["temperature_router"],
-                    max_tokens=200,
+                    max_tokens=320,
                 )
             except Exception as e2:
                 # Both attempts failed — fall back to keyword routing
@@ -174,6 +236,27 @@ class MetaRouter:
                     res["reasoning"] = f"Keyword-based fallback (LLM routing failed: {hint})"
                 return res
 
+        # Guard: if router output was truncated, retry once with a compact-output nudge.
+        if result and result.get("finish_reason") == "length":
+            retry_messages = messages + [{
+                "role": "user",
+                "content": (
+                    "Your previous output was truncated. "
+                    "Return ONLY valid compact JSON with keys: categories, confidence, reasoning."
+                ),
+            }]
+            try:
+                result = await self.api_client.chat(
+                    messages=retry_messages,
+                    model=self.model,
+                    temperature=OP_DEFAULTS["temperature_router"],
+                    response_format={"type": "json_object"},
+                    max_tokens=420,
+                )
+            except Exception:
+                # Keep original truncated result; parser/fallback logic below will handle it.
+                pass
+
         try:
             content = result.get("content", "{}")
 
@@ -183,10 +266,26 @@ class MetaRouter:
 
             parsed = json.loads(content)
             categories = parsed.get("categories", ["ALL_TOOLS"])
-            # Validate categories
-            valid = [c for c in categories if c in domains]
+
+            # Validate + normalize categories from the model.
+            valid = []
+            seen = set()
+            for c in categories:
+                normalized = self._normalize_category(c, domains)
+                if normalized and normalized not in seen:
+                    valid.append(normalized)
+                    seen.add(normalized)
+
+            # If still empty after normalization, use keyword fallback before ALL_TOOLS.
             if not valid:
-                valid = ["ALL_TOOLS"]
+                fallback = self._keyword_fallback(prompt).get("categories", [])
+                for c in fallback:
+                    normalized = self._normalize_category(c, domains)
+                    if normalized and normalized not in seen:
+                        valid.append(normalized)
+                        seen.add(normalized)
+                if not valid:
+                    valid = ["ALL_TOOLS"]
 
             # Heuristic: Inject SEARCH_TOOLS for specific data domains to ensure fallback
             # (In case the specific tool's API key is missing)
@@ -246,7 +345,7 @@ class MetaRouter:
             categories.append("CODING_TOOLS")
         
         # Weather
-        if any(w in p for w in ["weather", "forecast", "temperature", "météo", "prévision", "température", "pluie", "neige"]):
+        if any(w in p for w in ["weather", "forecast", "meteo", "temperature", "météo", "prévision", "température", "pluie", "neige"]):
             categories.append("WEATHER_TOOLS")
         
         # Multi-modal

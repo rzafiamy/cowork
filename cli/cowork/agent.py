@@ -572,7 +572,6 @@ class GeneralPurposeAgent:
                 "categories": categories,
                 "confidence": 1.0,
                 "reasoning": "Action mode",
-                "tool_probability": 1.0,
             }
         else:
             self.status_cb("🧭  Phase 2 · Meta-Routing intent classification...")

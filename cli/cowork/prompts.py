@@ -191,9 +191,11 @@ Respond ONLY with valid JSON:
 
 Guidance (not hard rules — use your judgment):
 - Prefer 2–3 focused categories over broad ALL_TOOLS
+- You MUST output exact category IDs from the available list (example: WEATHER_TOOLS, not WEATHER)
 - use TOOL call if enough confidence to achieve goal with it
 - Use CONVERSATIONAL when no external data or action is needed
 - Use CONVERSATIONAL_ONLY for short conceptual Q&A where tool calls are very unlikely
+- Use ALL_TOOLS only if confidence is not enough to select categories
 - For time-sensitive topics, prioritize available research tools over general ones
 - Avoid selecting categories that are not in the 'Available categories' list above\
 """

@@ -65,7 +65,7 @@ cowork run "Plan migration tasks" --trace
 
 Runtime behavior notes:
 
-- Short conceptual turns may use an internal `CONVERSATIONAL_ONLY` fast-path (skips full router/tool-schema orchestration).
+- Turns are always meta-routed first, then tool schemas are selected from routed categories.
 - Goal status banners (`✅/⚠️/❌`) are reserved for step-limit self-assessment responses, not normal turns.
 - Memory persistence is selective: durable profile/preference/project-state turns are prioritized over generic one-off Q&A.
 

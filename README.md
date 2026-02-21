@@ -116,8 +116,7 @@ Prefix your message with a hashtag to **fast-track routing** and bypass the Meta
 | `#coding` | CODING_TOOLS + WORKSPACE_TOOLS | `#coding build my freelancer AI landing page` |
 | `#note` | APP_CONNECTORS | `#note meeting summary: decided on Python` |
 
-Additionally, Cowork has an internal **conversational fast-path** for short conceptual Q&A.  
-When triggered, it skips full router + tool schema setup and uses a compact chat system prompt.
+Routing now always runs through the Meta-Router first, then tool schema is selected from routed categories.
 
 ---
 

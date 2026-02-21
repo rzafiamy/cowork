@@ -21,7 +21,7 @@ The system is partitioned into three functional "Cerebral Zones":
 *Recursive reasoning and tool execution.*
 
 ### ✅ Current CLI Runtime Notes (2026)
-- Adds a **conversational fast-path** for short conceptual turns (`CONVERSATIONAL_ONLY`).
+- Routes every turn through the Meta-Router before selecting tool schemas.
 - Uses a **split system prompt strategy**:
   - `AGENT_CHAT_SYSTEM_PROMPT` for simple chat turns.
   - `AGENT_SYSTEM_PROMPT` for multi-step/tool-oriented turns.
@@ -93,7 +93,7 @@ graph TD
 ## 💎 Core Philosophical Pillars
 - 💰 **Context is Currency**: Don't spend tokens on raw data unless required for reasoning.
 - 🎯 **Precision over Creativity**: Logic tiers (routing, compression) run at near-zero temperature.
-- ⚡ **Fast-Path First**: Simple conceptual requests bypass heavy orchestration.
+- ⚡ **Lean Orchestration**: Routing and schema loading stay minimal and task-scoped.
 - 💾 **Persistence & Caching**: Every job is synced to survive crashes, and user context is cached to eliminate redundant Auth round-trips.
 - 🧠 **Memory Discipline**: Only durable memories are persisted; only relevant memories are injected.
 - 🔊 **Fail Loudly & Recursively**: Errors are fed back as observations for AI self-healing.
