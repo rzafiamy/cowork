@@ -230,6 +230,10 @@ class Memoria:
         """
         summary = self._summary
         triplets = self._get_weighted_triplets(query)
+        # For short/low-signal conversational turns, semantic relevance may be weak.
+        # Add a small recency fallback so durable profile facts remain usable.
+        if not triplets:
+            triplets = self._get_recent_triplets(limit=max(2, self.top_k // 2))
 
         if not summary and not triplets:
             return ""
@@ -248,6 +252,26 @@ class Memoria:
             summary=summary_str,
             triplets=triplets_str,
         )
+
+    def _get_recent_triplets(self, limit: int = 3) -> list[dict]:
+        rows = self._db.execute(
+            "SELECT id, subject, predicate, object, created_at "
+            "FROM kg_triplets WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            (self.user_id, max(1, int(limit))),
+        ).fetchall()
+        out: list[dict] = []
+        for row in rows:
+            out.append(
+                {
+                    "id": row["id"],
+                    "subject": row["subject"],
+                    "predicate": row["predicate"],
+                    "object": row["object"],
+                    "weight": 0.5,
+                    "similarity": 0.0,
+                }
+            )
+        return out
 
     def _topic_terms(self, text: str) -> set[str]:
         terms = set(re.findall(r"[a-zA-Z0-9_]+", text.lower()))

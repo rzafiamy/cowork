@@ -614,12 +614,9 @@ class GeneralPurposeAgent:
 
         # ── Memory Context Retrieval ───────────────────────────────────────────
         memory_context = ""
-        if "CONVERSATIONAL_ONLY" not in categories:
-            self.status_cb("🧠  Retrieving memory context...")
-            memory_context = self.memoria.get_fused_context(processed_input)
-            self.trace_cb("memory_context", {"memory_context": memory_context})
-        else:
-            self.trace_cb("memory_context", {"memory_context": "", "skipped": True})
+        self.status_cb("🧠  Retrieving memory context...")
+        memory_context = self.memoria.get_fused_context(processed_input)
+        self.trace_cb("memory_context", {"memory_context": memory_context, "skipped": False})
 
         # ── Build Tool Schema (Filters out unconfigured paid tools) ───────────
         tools_schema = [] if "CONVERSATIONAL_ONLY" in categories else get_available_tools_for_categories(categories)
@@ -643,6 +640,7 @@ class GeneralPurposeAgent:
         if "CONVERSATIONAL_ONLY" in categories:
             system_prompt = AGENT_CHAT_SYSTEM_PROMPT.format(
                 current_datetime=current_dt,
+                memory_context=memory_context or "(No memory context yet)",
                 session_id=session.session_id[:8],
                 message_count=len(session.messages),
             )
