@@ -36,6 +36,19 @@ The REACT loop runs for up to `max_steps` (default: 15) iterations. At the limit
 
 ---
 
+## 📚 Documentation
+
+The architecture and behavior of Cowork are documented in detail:
+1. [CLI and Entrypoint](docs/new_docs/01_CLI_and_Entrypoint.md)
+2. [Agent and Reasoning](docs/new_docs/02_Agent_and_Reasoning.md)
+3. [Meta-Routing](docs/new_docs/03_Meta_Routing.md)
+4. [Context and Memory](docs/new_docs/04_Context_and_Memory.md)
+5. [Tools and Execution](docs/new_docs/05_Tools_and_Execution.md)
+6. [Configuration and Profiles](docs/new_docs/06_Configuration_and_Profiles.md)
+7. [Background Jobs and Tracing](docs/new_docs/07_Background_Jobs_and_Tracing.md)
+
+---
+
 ## 🚀 Quick Start
 
 Full command catalog: `docs/CLI_REFERENCE.md`

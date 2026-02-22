@@ -93,11 +93,13 @@ class StorageWriteTool(BaseTool):
         }
 
     def execute(self, filename: str, content: str) -> str:
-        self._emit(f"💾 Writing to workspace storage: '{filename}'...")
+        from pathlib import Path
+        safe_filename = Path(filename).name
+        self._emit(f"💾 Writing to workspace storage: '{safe_filename}'...")
         from ...config import CONFIG_DIR
         storage_dir = CONFIG_DIR / "storage"
         storage_dir.mkdir(exist_ok=True)
-        path = storage_dir / filename
+        path = storage_dir / safe_filename
         path.write_text(content, encoding="utf-8")
         return f"✅ File written: {path}\n• Size: {len(content)} chars"
 

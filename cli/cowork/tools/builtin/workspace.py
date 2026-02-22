@@ -47,13 +47,14 @@ class WorkspaceWriteTool(BaseTool):
         return None
 
     def execute(self, filename: str, content: str) -> str:
-        self._emit(f"📁 Writing workspace artifact: '{filename}'...")
+        safe_filename = Path(filename).name
+        self._emit(f"📁 Writing workspace artifact: '{safe_filename}'...")
         ws = self._get_workspace_session()
         if not ws:
-            path = WORKSPACE_ROOT / filename
+            path = WORKSPACE_ROOT / safe_filename
             path.write_text(content, encoding="utf-8")
             return f"✅ Written to workspace: {path}\n• Size: {len(content)} chars"
-        path = ws.write_artifact(filename, content)
+        path = ws.write_artifact(safe_filename, content)
         return (
             f"✅ Artifact saved to workspace!\n"
             f"• Path: `{path}`\n"

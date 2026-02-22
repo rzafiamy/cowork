@@ -319,11 +319,13 @@ class Scratchpad:
 
     def save(self, key: str, content: str, description: str = "") -> str:
         """Save content, return ref:key pointer."""
-        ref_key = f"ref:{key}"
-        path = self._dir / f"{key}.txt"
+        from pathlib import Path
+        safe_key = Path(key).name
+        ref_key = f"ref:{safe_key}"
+        path = self._dir / f"{safe_key}.txt"
         path.write_text(content, encoding="utf-8")
-        self._index[key] = {
-            "key": key,
+        self._index[safe_key] = {
+            "key": safe_key,
             "description": description,
             "size_chars": len(content),
             "saved_at": datetime.now().isoformat(),
@@ -334,7 +336,8 @@ class Scratchpad:
 
     def get(self, key: str) -> Optional[str]:
         """Retrieve full content by key."""
-        clean_key = key.replace("ref:", "")
+        from pathlib import Path
+        clean_key = Path(key.replace("ref:", "")).name
         path = self._dir / f"{clean_key}.txt"
         if path.exists():
             return path.read_text(encoding="utf-8")
