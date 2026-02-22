@@ -44,6 +44,7 @@ Tools are grouped into high-level functional categories in `cli/cowork/router.py
 *   `🎥 MEDIA_AND_ENTERTAINMENT`: Image generation, YouTube.
 *   `📊 DATA_AND_UTILITY`: Charts, calculation.
 *   `🔗 APP_CONNECTORS`: Third-party integrations.
+*   `☁️ NEXTCLOUD_TOOLS`: Nextcloud file operations (upload, download, search).
 *   `💭 CONVERSATIONAL_ONLY`: Direct-answer mode with no tool schema.
 
 ### 3.2 The Routing Phase

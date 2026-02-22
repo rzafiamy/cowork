@@ -165,6 +165,7 @@ ROUTER_CATEGORY_DESCRIPTIONS = {
     "DOCUMENT_TOOLS": "Create PDF, PowerPoint (PPTX), Excel (XLSX), or Word (DOCX) documents",
     "SESSION_SCRATCHPAD": "Store or retrieve large data within this session",
     "APP_CONNECTORS": "Notes, Kanban tasks, calendar events, file storage",
+    "NEXTCLOUD_TOOLS": "Nextcloud file operations (list, upload, download, search, create folders)",
     "WORKSPACE_TOOLS": "Read/write files to the session workspace",
     "CRON_TOOLS": "Schedule recurring tasks or future one-time agent runs",
     "CONVERSATIONAL": "Simple chat, opinions, greetings — no tools needed",

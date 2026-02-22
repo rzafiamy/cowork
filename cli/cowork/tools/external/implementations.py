@@ -19,6 +19,7 @@ from . import knowledge
 from . import communication
 from . import google
 from . import social
+from . import nextcloud
 
 # Re-export key functions for tools/__init__.py or manager.py if needed
 # But better to aggregate them here.
@@ -29,7 +30,7 @@ EXTERNAL_TOOL_HANDLERS: dict[str, Any] = {}
 # Aggregate from all modules
 _modules = [
     youtube, search, web, news, code, weather, 
-    media, knowledge, communication, google, social
+    media, knowledge, communication, google, social, nextcloud
 ]
 
 for mod in _modules:
@@ -71,6 +72,12 @@ KEY_REQUIREMENTS: dict[str, str | list[str] | None] = {
     "gmail_send_email":            "GOOGLE_API_KEY",
     "linkedin_search":      None,
     "whatsapp_send_message":None,
+    "nextcloud_list":       ["NEXTCLOUD_URL", "NEXTCLOUD_WEBDAV_URL"],
+    "nextcloud_upload":     ["NEXTCLOUD_URL", "NEXTCLOUD_WEBDAV_URL"],
+    "nextcloud_download":   ["NEXTCLOUD_URL", "NEXTCLOUD_WEBDAV_URL"],
+    "nextcloud_create_folder": ["NEXTCLOUD_URL", "NEXTCLOUD_WEBDAV_URL"],
+    "nextcloud_delete":     ["NEXTCLOUD_URL", "NEXTCLOUD_WEBDAV_URL"],
+    "nextcloud_search":     "NEXTCLOUD_URL",
 }
 
 def get_available_external_tools() -> list[dict]:

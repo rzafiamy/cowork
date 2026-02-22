@@ -123,6 +123,7 @@ class MetaRouter:
             "SCRATCHPAD": "SESSION_SCRATCHPAD",
             "UTILITY": "DATA_AND_UTILITY",
             "DATA": "DATA_AND_UTILITY",
+            "NEXTCLOUD": "NEXTCLOUD_TOOLS",
             "CONVERSATION": "CONVERSATIONAL",
             "CHAT": "CONVERSATIONAL",
         }
@@ -146,6 +147,7 @@ class MetaRouter:
             ("GOOGLE", "GOOGLE_TOOLS"),
             ("COMM", "COMMUNICATION_TOOLS"),
             ("SCRATCH", "SESSION_SCRATCHPAD"),
+            ("NEXTCLOUD", "NEXTCLOUD_TOOLS"),
         ]
         for needle, canonical in contains_rules:
             if needle in token and canonical in domains:
@@ -371,6 +373,10 @@ class MetaRouter:
             categories.append("SESSION_SCRATCHPAD")
         if any(w in p for w in ["workspace", "artifact", "write file", "save file", "fichier", "écrire"]):
             categories.append("WORKSPACE_TOOLS")
+
+        # Nextcloud
+        if any(w in p for w in ["nextcloud", "cloud sync", "cloud storage"]):
+            categories.append("NEXTCLOUD_TOOLS")
 
         if not categories:
             # General fallbacks
