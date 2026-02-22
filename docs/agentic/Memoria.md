@@ -39,6 +39,15 @@
 ✅ **Session Continuity**: Rolling summaries of ongoing conversations  
 ✅ **Relevance Discipline**: Topical filters reduce unrelated memory injection  
 
+### 🔄 Memoria Lifecycle Table
+
+| Component | Created | Updated | Primary Use | Retention / Deletion |
+| :--- | :--- | :--- | :--- | :--- |
+| **Knowledge Triplets** | Durable turn (LLM extraction) | N/A (Append only) | Persona personalization | Persistent / Global |
+| **Session Summary** | Initial turn of session | After every Assistant response | Rolling session continuity | Persistent per session |
+| **Vector Index** | System startup / First fact | Full rebuild on fact update | Semantic similarity retrieval | Persistent / Sync with SQLite |
+| **`memoria.db`** | First app launch | Every durable write event | Primary source of truth | Persistent / Global |
+
 ---
 
 ## 🏗️ Architecture
