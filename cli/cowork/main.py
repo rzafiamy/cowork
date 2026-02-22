@@ -750,11 +750,31 @@ async def handle_command(
         else:
             render_cron_list(mgr.list_all())
 
-    elif command == "/memory":
+    elif command in ("/memory", "/vector"):
         sub = parts[1].lower() if len(parts) > 1 else ""
         if not sub or sub == "list" or sub == "view":
             from .ui import render_memory_dashboard
             render_memory_dashboard(memoria.get_summary(), memoria.get_all_triplets(), memoria.kg_limit)
+        elif sub == "search":
+            if len(parts) < 3:
+                render_error("Usage: /memory search <query>")
+            else:
+                query = parts[2].strip().strip('"').strip("'")
+                results = memoria.search_triplets(query)
+                from .ui import render_memory_search_results
+                render_memory_search_results(query, results)
+        elif sub == "add":
+            # Expecting exactly 3 more parts or aquoted string?
+            # Let's try to be smart about it
+            args = parts[2].split() if len(parts) > 2 else []
+            if len(args) < 3:
+                render_error("Usage: /memory add <subject> <predicate> <object>")
+            else:
+                subj = args[0].strip('"').strip("'")
+                pred = args[1].strip('"').strip("'")
+                obj = " ".join(args[2:]).strip('"').strip("'")
+                tid = memoria.add_triplet(subj, pred, obj)
+                render_success(f"✅ Added knowledge fact: {tid[:8]}")
         elif sub == "rm":
             if len(parts) < 3:
                 render_error("Usage: /memory rm <id>")
@@ -1217,9 +1237,13 @@ def config(set_values: tuple) -> None:
         render_config(_config.all())
 
 
-@cli.command()
-def memory() -> None:
-    """Show Memoria (long-term memory) status."""
+@cli.group(invoke_without_command=True)
+@click.pass_context
+def memory(ctx: click.Context) -> None:
+    """Manage Memoria (long-term memory)."""
+    if ctx.invoked_subcommand is not None:
+        return
+
     print_banner()
     if not _config.is_configured():
         render_error("Not configured.")
@@ -1239,6 +1263,54 @@ def memory() -> None:
             "  [yellow]🔍 Local RAG:[/yellow] [dim]keyword fallback "
             "(install sentence-transformers + sqlite-vec for semantic search)[/dim]"
         )
+
+
+@memory.command(name="search")
+@click.argument("query")
+def memory_search(query: str) -> None:
+    """Perform a semantic search for facts."""
+    api_client = _make_api_client()
+    user_id = _get_memory_user_id()
+    mem = Memoria(user_id, "search_check", api_client, _config)
+    results = mem.search_triplets(query)
+    from .ui import render_memory_search_results
+    render_memory_search_results(query, results)
+
+
+@memory.command(name="add")
+@click.argument("subject")
+@click.argument("predicate")
+@click.argument("object")
+def memory_add(subject: str, predicate: str, object: str) -> None:
+    """Manually add a knowledge fact."""
+    api_client = _make_api_client()
+    user_id = _get_memory_user_id()
+    mem = Memoria(user_id, "add_check", api_client, _config)
+    tid = mem.add_triplet(subject, predicate, object)
+    render_success(f"✅ Added knowledge fact: {tid[:8]}")
+
+
+@cli.group(name="vector", invoke_without_command=True)
+@click.pass_context
+def vector(ctx: click.Context) -> None:
+    """Alias for memory management."""
+    ctx.invoke(memory)
+
+
+@vector.command(name="search")
+@click.argument("query")
+@click.pass_context
+def vector_search(ctx: click.Context, query: str) -> None:
+    ctx.invoke(memory_search, query=query)
+
+
+@vector.command(name="add")
+@click.argument("subject")
+@click.argument("predicate")
+@click.argument("object")
+@click.pass_context
+def vector_add(ctx: click.Context, subject: str, predicate: str, object: str) -> None:
+    ctx.invoke(memory_add, subject=subject, predicate=predicate, object=object)
 
 
 @cli.command()

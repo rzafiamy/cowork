@@ -259,7 +259,8 @@ These are chat-time commands, not shell subcommands:
 - `/trace path`
 - `/tokens`, `/tokens reset`
 - `/cron`, `/cron list`, `/cron view <id>`, `/cron rm <id>`
-- `/memory`, `/memory view`, `/memory summarize`, `/memory rm <id>`, `/memory clear`
+- `/memory`, `/memory list`, `/memory search <q>`, `/memory add <sub> <pred> <obj>`, `/memory summarize`, `/memory rm <id>`, `/memory clear`, `/memory compress`
+- `/vector` (alias for `/memory`)
 - `/tools`
 - `/ai`, `/ai add ...`, `/ai switch <name>`, `/ai remove <name>`, `/ai save [name]`
 - `/model <name>`

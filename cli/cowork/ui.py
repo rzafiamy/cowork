@@ -561,6 +561,48 @@ def render_memory_dashboard(summary: str, triplets: list[dict], triplet_limit: i
     console.print(kg_panel)
 
 
+def render_memory_search_results(query: str, results: list[dict]) -> None:
+    """Render the results of a semantic memory search."""
+    if not results:
+        console.print(Panel(
+            f"[muted]No memories found matching '[highlight]{query}[/highlight]'.[/muted]",
+            title="[memory]🔍 Vector Search[/memory]",
+            border_style="memory",
+        ))
+        return
+
+    table = Table(
+        box=box.ROUNDED,
+        border_style="memory",
+        header_style="memory",
+        show_lines=True,
+        expand=True
+    )
+    table.add_column("Rank", style="muted", width=6, justify="right")
+    table.add_column("Fact (Subject → Predicate → Object)", style="bold_white")
+    table.add_column("Score", justify="right")
+    table.add_column("ID", style="muted", width=10)
+
+    for i, t in enumerate(results[:15], 1):
+        score = t.get("weight", 0.0)
+        score_color = "success" if score > 0.7 else "warning" if score > 0.4 else "muted"
+        
+        fact = f"[highlight]{t['subject']}[/highlight] [accent]{t['predicate']}[/accent] [bold_white]{t['object']}[/bold_white]"
+        
+        table.add_row(
+            str(i),
+            fact,
+            f"[{score_color}]{score:.2f}[/{score_color}]",
+            t["id"][:8]
+        )
+
+    console.print(Panel(
+        table,
+        title=f"[memory]🔍 Vector Search: '{query}' ({len(results)} matches)[/memory]",
+        border_style="memory",
+    ))
+
+
 # ─── Token Usage Display ────────────────────────────────────────────────────────────
 
 def render_token_usage(entries: list[dict], totals: dict) -> None:
@@ -785,9 +827,12 @@ def render_help() -> None:
         ("/sessions",                       "List all sessions"),
         ("/load <id>",                      "Load a session by ID or number"),
         ("/memory",                         "Show memory dashboard (summary + facts)"),
+        ("/memory search <query>",           "Explicit vector search for persona facts"),
+        ("/memory add <sub> <pred> <obj>",  "Manually insert a long-term knowledge fact"),
         ("/memory rm <id>",                 "Delete a memory fact by ID"),
         ("/memory compress",               "Consolidate Knowledge Graph / deduplicate"),
         ("/memory clear",                   "Clear all session and persona memory"),
+        ("/vector <...>",                   "Alias for /memory"),
         ("/jobs",                           "Show Sentinel job dashboard"),
         ("/jobs clean",                     "Wipe all job history"),
         ("/jobs resume <id>",               "Resume a job by its ID prefix"),
@@ -911,10 +956,15 @@ SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/cron",                           "List all scheduled cron jobs"),
     ("/cron view ",                     "View cron job result  e.g. /cron view abc12345"),
     ("/cron rm ",                       "Remove a cron job  e.g. /cron rm abc12345"),
-    ("/memory",                         "Show memory dashboard"),
+    ("/memory",                         "Show memory dashboard (context + facts)"),
+    ("/memory search ",                  "Search knowledge facts  e.g. /memory search python"),
+    ("/memory add ",                     "Manually add a fact  e.g. /memory add User likes pizza"),
     ("/memory rm ",                      "Delete a memory fact  e.g. /memory rm 12345678"),
     ("/memory compress",               "Consolidate KG (deduplicate/merge)"),
     ("/memory clear",                   "Wipe all persona/session memory"),
+    ("/vector",                         "Alias for /memory (e.g. /vector search)"),
+    ("/vector search ",                  "Explicit semantic search for facts"),
+    ("/vector add ",                     "Manually insert a knowledge fact"),
     ("/ai",                      "List saved AI profiles"),
     ("/ai add ",                 "Add AI profile  e.g. /ai add gpt4 https://api.openai.com/v1 gpt-4o"),
     ("/ai switch ",              "Switch to a profile  e.g. /ai switch gpt4"),

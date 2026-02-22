@@ -55,7 +55,10 @@ Cowork has a built-in Sentinel Job Dashboard capable of surviving crashes and ru
 ## Memory & Tracing
 
 * `cowork memory`: Show Memoria status summary.
+* `/memory search <query>`: Perform semantic search against knowledge graph.
+* `/memory add <sub> <pred> <obj>`: Manually add long-term memory facts.
 * `/memory clear`: Clear all long-term memory.
+* `/vector`: Alias for `/memory`.
 * `cowork trace`: Render a saved trace in a terminal-readable timeline.
 * `/trace full`: View full readable trace payloads.
 * `/trace raw`: View raw JSON trace events.

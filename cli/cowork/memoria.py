@@ -42,6 +42,11 @@ STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
     "how", "i", "in", "is", "it", "of", "on", "or", "that", "the", "this",
     "to", "we", "what", "when", "where", "who", "why", "with", "you", "your",
+    # French
+    "le", "la", "les", "un", "une", "des", "du", "de", "au", "aux",
+    "mon", "ton", "son", "ma", "ta", "sa", "mes", "tes", "ses",
+    "je", "tu", "il", "elle", "nous", "vous", "ils", "elles",
+    "est", "sont", "et", "ou", "sur", "sous", "dans", "avec",
 }
 
 # ─── Prompts are centralized in prompts.py ───────────────────────────────────
@@ -637,6 +642,46 @@ class Memoria:
                 self._save_summary()
         except Exception:
             pass
+
+    def add_triplet(self, subject: str, predicate: str, object_: str) -> str:
+        """Manually add a knowledge triplet to the graph."""
+        triplet_id = str(uuid.uuid4())
+        triplet_text = f"{subject} {predicate} {object_}"
+
+        embedding: Optional[bytes] = None
+        if self._embedder:
+            embedding = self._embedder.encode(triplet_text)
+
+        self._db.execute(
+            """INSERT INTO kg_triplets
+               (id, user_id, subject, predicate, object, embedding, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                triplet_id,
+                self.user_id,
+                str(subject)[:200],
+                str(predicate)[:200],
+                str(object_)[:200],
+                embedding,
+                datetime.utcnow().isoformat(),
+            ),
+        )
+
+        if embedding:
+            try:
+                self._db.execute(
+                    "INSERT INTO kg_vec(id, embedding) VALUES (?, ?)",
+                    (triplet_id, embedding),
+                )
+            except Exception:
+                pass
+
+        self._db.commit()
+        return triplet_id
+
+    def search_triplets(self, query: str) -> list[dict]:
+        """Perform a semantic search for relevant triplets."""
+        return self._get_weighted_triplets(query)
 
     # ── Utility ───────────────────────────────────────────────────────────────
 
