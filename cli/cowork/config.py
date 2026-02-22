@@ -20,6 +20,7 @@ CONFIG_DIR  = Path.home() / ".cowork"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 SESSIONS_DIR = CONFIG_DIR / "sessions"
 SCRATCHPAD_DIR = CONFIG_DIR / "scratchpad"
+WORKSPACE_ROOT = CONFIG_DIR / "workspace"
 JOBS_FILE        = CONFIG_DIR / "jobs.json"
 TOKENS_FILE      = CONFIG_DIR / "tokens.json"
 AI_PROFILES_FILE = CONFIG_DIR / "ai_profiles.json"
@@ -29,6 +30,7 @@ def _ensure_dirs() -> None:
     CONFIG_DIR.mkdir(exist_ok=True)
     SESSIONS_DIR.mkdir(exist_ok=True)
     SCRATCHPAD_DIR.mkdir(exist_ok=True)
+    WORKSPACE_ROOT.mkdir(exist_ok=True)
 
 _ensure_dirs()
 
@@ -216,6 +218,7 @@ class Session:
     def __init__(self, session_id: Optional[str] = None, title: str = "Untitled Session") -> None:
         self.session_id = session_id or str(uuid.uuid4())
         self.title = title
+        self.workspace_slug: Optional[str] = None
         self.created_at = datetime.now().isoformat()
         self.updated_at = self.created_at
         self.messages: list[dict] = []
@@ -236,6 +239,7 @@ class Session:
         return {
             "session_id": self.session_id,
             "title": self.title,
+            "workspace_slug": self.workspace_slug,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "messages": self.messages,
@@ -247,6 +251,7 @@ class Session:
     @classmethod
     def from_dict(cls, data: dict) -> "Session":
         s = cls(session_id=data["session_id"], title=data.get("title", "Untitled"))
+        s.workspace_slug = data.get("workspace_slug")
         s.created_at = data.get("created_at", s.created_at)
         s.updated_at = data.get("updated_at", s.updated_at)
         s.messages = data.get("messages", [])
@@ -270,14 +275,33 @@ class Session:
 
     @classmethod
     def list_all(cls) -> list[dict]:
+        """List all saved sessions with their titles and workspace slugs."""
+        # Pre-scan workspace for session_id -> slug mapping
+        slug_map = {}
+        if WORKSPACE_ROOT.exists():
+            for d in WORKSPACE_ROOT.iterdir():
+                if d.is_dir() and not d.name.startswith("."):
+                    meta_file = d / "session.json"
+                    if meta_file.exists():
+                        try:
+                            with open(meta_file, encoding="utf-8") as f:
+                                meta_data = json.load(f)
+                            sid = meta_data.get("session_id")
+                            if sid:
+                                slug_map[sid] = d.name
+                        except Exception:
+                            pass
+
         sessions = []
         for p in sorted(SESSIONS_DIR.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True):
             try:
                 with open(p) as f:
                     data = json.load(f)
+                sid = data["session_id"]
                 sessions.append({
-                    "session_id": data["session_id"],
+                    "session_id": sid,
                     "title": data.get("title", "Untitled"),
+                    "slug": slug_map.get(sid, data.get("workspace_slug", "")),
                     "created_at": data.get("created_at", ""),
                     "updated_at": data.get("updated_at", ""),
                     "message_count": len(data.get("messages", [])),
@@ -289,6 +313,110 @@ class Session:
     def get_chat_messages(self) -> list[dict]:
         """Return messages in OpenAI chat format (role + content only)."""
         return [{"role": m["role"], "content": m["content"]} for m in self.messages]
+
+    def delete(self) -> bool:
+        """Permanently delete this session file and its linked workspace."""
+        path = SESSIONS_DIR / f"{self.session_id}.json"
+        res = False
+        if path.exists():
+            path.unlink()
+            res = True
+        
+        # Cascade delete workspace folder
+        if self.workspace_slug:
+            ws_path = WORKSPACE_ROOT / self.workspace_slug
+            if ws_path.exists():
+                import shutil
+                shutil.rmtree(ws_path)
+        else:
+            # Fallback: find by session_id in workspace folders
+            if WORKSPACE_ROOT.exists():
+                import shutil
+                for d in WORKSPACE_ROOT.iterdir():
+                    if d.is_dir() and not d.name.startswith("."):
+                        meta_file = d / "session.json"
+                        if meta_file.exists():
+                            try:
+                                with open(meta_file, encoding="utf-8") as f:
+                                    meta_data = json.load(f)
+                                if meta_data.get("session_id") == self.session_id:
+                                    shutil.rmtree(d)
+                                    break
+                            except Exception:
+                                pass
+        return res
+
+    def get_sandwich_content(self, max_chars: int = 1200) -> str:
+        """Return a sandwich of session messages (start and end)."""
+        if not self.messages:
+            return ""
+        
+        # Combine all messages into a single string
+        lines = []
+        for m in self.messages:
+            content = str(m.get("content", ""))
+            lines.append(f"{m.get('role', 'user')}: {content}")
+        
+        full_text = "\n".join(lines)
+        if len(full_text) <= max_chars:
+            return full_text
+        
+        half = max_chars // 2
+        return f"{full_text[:half]}\n\n... [SANDWICHED] ...\n\n{full_text[-half:]}"
+
+    def match(self, pattern: str, fields: Optional[list[str]] = None) -> bool:
+        """
+        Check if the session matches the given regex pattern in specified fields.
+        If fields is None, checks title, summary, and all message contents.
+        """
+        import re
+        try:
+            regex = re.compile(pattern, re.IGNORECASE)
+        except re.error:
+            return False
+
+        if fields is None:
+            fields = ["title", "summary", "content"]
+
+        if "title" in fields and regex.search(self.title):
+            return True
+        
+        if "summary" in fields and regex.search(self.summary):
+            return True
+        
+        if "content" in fields:
+            for m in self.messages:
+                content = str(m.get("content", ""))
+                if regex.search(content):
+                    return True
+        
+        if "triplets" in fields:
+            for t in self.triplets:
+                t_str = f"{t.get('subject', '')} {t.get('predicate', '')} {t.get('object', '')}"
+                if regex.search(t_str):
+                    return True
+
+        if "id" in fields and regex.search(self.session_id):
+            return True
+
+        return False
+
+    @classmethod
+    def clean_empty(cls) -> int:
+        """Permanently delete all sessions with zero messages and their workspaces. Returns count of deleted."""
+        count = 0
+        for p in SESSIONS_DIR.glob("*.json"):
+            try:
+                with open(p) as f:
+                    data = json.load(f)
+                if not data.get("messages") or len(data.get("messages", [])) == 0:
+                    # Load and use the instance delete() to trigger cascade
+                    s = cls.from_dict(data)
+                    s.delete()
+                    count += 1
+            except Exception:
+                pass
+        return count
 
 
 # ─── Scratchpad ───────────────────────────────────────────────────────────────

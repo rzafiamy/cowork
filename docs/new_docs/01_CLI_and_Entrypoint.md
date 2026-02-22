@@ -73,3 +73,14 @@ Cowork has a built-in Sentinel Job Dashboard capable of surviving crashes and ru
 
 ## Reset
 * `/reset`: **DANGER**. Wipes all persisted Cowork state under `~/.cowork/*`.
++
++## Initialization Sequence
++
++Every `cowork` execution begins with a standard boot lifecycle:
++
++1.  **Firewall Integrity**: Checks `firewall.yaml` for structural validity.
++2.  **Session Purge**: Runs an automatic cleanup of "ghost" sessions (those with zero messages) in `~/.cowork/sessions/`.
++3.  **Config Check**: Ensures API keys and endpoints are set; prompts for `setup` if not.
++4.  **Scheduler Start**: Launches the background thread for recurring Cron jobs.
++5.  **State Loading**: Attaches to the requested session or spins up a new isolated environment.
++

@@ -17,7 +17,7 @@ from typing import Any, Callable, Optional
 
 from .api_client import APIClient, APIError
 from .config import AgentJob, ConfigManager, FirewallManager, FirewallAction, JobManager, Scratchpad, Session
-from .prompts import AGENT_CHAT_SYSTEM_PROMPT, AGENT_SYSTEM_PROMPT, COMPRESS_PROMPT, TITLE_GENERATION_PROMPT
+from .prompts import AGENT_CHAT_SYSTEM_PROMPT, AGENT_SYSTEM_PROMPT, COMPRESS_PROMPT, SESSION_RE_TITLE_PROMPT
 from .memoria import Memoria
 from .router import MetaRouter
 from .theme import (
@@ -34,7 +34,7 @@ from .tools import (
 )
 
 # ─── Prompts are centralized in prompts.py ───────────────────────────────────
-# Import: AGENT_SYSTEM_PROMPT, COMPRESS_PROMPT, TITLE_GENERATION_PROMPT
+# Import: AGENT_SYSTEM_PROMPT, COMPRESS_PROMPT, SESSION_RE_TITLE_PROMPT
 
 # ─── Context Compressor ───────────────────────────────────────────────────────
 
@@ -1015,20 +1015,24 @@ class GeneralPurposeAgent:
     # ── Auto Title Generation ─────────────────────────────────────────────────
 
     async def generate_title(self, session: Session) -> str:
-        """Generate a session title from the first exchange."""
-        if len(session.messages) < 2:
+        """Generate a session title from the content using the dash-separated 12-word logic."""
+        if not session.messages:
             return "New Session"
-        first_user = next((m["content"] for m in session.messages if m["role"] == "user"), "")
+        
         try:
+            # Get rank/count for unique prefix
+            all_sessions = Session.list_all()
+            unique_num = f"{len(all_sessions) + 1:04d}"
+            
+            content = session.get_sandwich_content(max_chars=1200) # Fast preview
+            prompt = SESSION_RE_TITLE_PROMPT.format(unique_id=unique_num, content=content)
+            
             result = await self.api_client.chat(
-                messages=[{
-                    "role": "user",
-                    "content": TITLE_GENERATION_PROMPT.format(first_user=first_user[:200]),
-                }],
-                model=self.config.get("model_text"),
-                temperature=OP_DEFAULTS["temperature_chat"],
-                max_tokens=20,
+                messages=[{"role": "user", "content": prompt}],
+                model=self.config.get("model_compress"),
+                temperature=0.0,
             )
-            return result.get("content", "").strip() or "New Session"
+            title = result.get("content", "").strip().strip('"').strip("'").lower()
+            return title or f"{unique_num}-new-session-untitled-conversation-thread-management-system-log"
         except Exception:
-            return first_user[:40] + "..." if len(first_user) > 40 else first_user
+            return f"session-{int(time.time())}"

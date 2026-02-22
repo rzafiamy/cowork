@@ -43,7 +43,7 @@ WORKSPACE_ROOT: Path = _find_workspace_root()
 
 # ─── Slug Utilities ───────────────────────────────────────────────────────────
 
-def _slugify(title: str, max_len: int = 48) -> str:
+def _slugify(title: str, max_len: int = 128) -> str:
     """Convert a title to a safe, readable directory name."""
     # Lowercase, replace spaces/special chars with hyphens
     slug = title.lower().strip()
@@ -309,13 +309,13 @@ class WorkspaceManager:
     def _existing_slugs(self) -> set[str]:
         return {p.name for p in WORKSPACE_ROOT.iterdir() if p.is_dir() and not p.name.startswith(".")}
 
-    def create(self, title: str = "New Session") -> WorkspaceSession:
+    def create(self, title: str = "New Session", session_id: Optional[str] = None) -> WorkspaceSession:
         """Create a new workspace session with a human-readable slug."""
         import uuid
         existing = self._existing_slugs()
         slug = _unique_slug(title, existing)
-        session_id = str(uuid.uuid4())
-        ws = WorkspaceSession(slug=slug, session_id=session_id, title=title)
+        sid = session_id or str(uuid.uuid4())
+        ws = WorkspaceSession(slug=slug, session_id=sid, title=title)
         # Write initial context.md
         ws.write_context(
             f"# {title}\n\n"
@@ -369,8 +369,11 @@ class WorkspaceManager:
         ws = WorkspaceSession.load(slug)
         if not ws:
             return None
+        
+        old_session_id = ws.session_id
         existing = self._existing_slugs() - {slug}
         new_slug = _unique_slug(new_title, existing)
+        
         ws.title = new_title
         if new_slug != slug:
             new_path = WORKSPACE_ROOT / new_slug
@@ -378,21 +381,86 @@ class WorkspaceManager:
             ws.slug = new_slug
             ws._dir = new_path
         ws.save()
+
+        # Cascade update to the regular session file in SESSIONS_DIR
+        sessions_dir = WORKSPACE_ROOT.parent / "sessions"
+        session_file = sessions_dir / f"{old_session_id}.json"
+        if session_file.exists():
+            try:
+                with open(session_file, "r", encoding="utf-8") as f:
+                    s_data = json.load(f)
+                s_data["title"] = new_title
+                s_data["workspace_slug"] = ws.slug
+                with open(session_file, "w", encoding="utf-8") as f:
+                    json.dump(s_data, f, indent=2)
+            except Exception:
+                pass
+
         return ws
 
     def delete(self, slug: str) -> bool:
-        """Delete a workspace session folder."""
+        """Delete a workspace session folder and its linked session file."""
         path = WORKSPACE_ROOT / slug
-        if path.exists():
-            shutil.rmtree(path)
-            return True
-        return False
+        if not path.exists():
+            return False
+
+        # Try to find session_id to cascade delete
+        session_id = None
+        meta_path = path / "session.json"
+        if meta_path.exists():
+            try:
+                with open(meta_path, encoding="utf-8") as f:
+                    data = json.load(f)
+                    session_id = data.get("session_id")
+            except Exception:
+                pass
+
+        # Cascade delete regular session file if found
+        if session_id:
+            sessions_dir = WORKSPACE_ROOT.parent / "sessions"
+            session_file = sessions_dir / f"{session_id}.json"
+            if session_file.exists():
+                session_file.unlink()
+
+        # Delete the workspace folder
+        shutil.rmtree(path)
+        return True
 
     def clear_all(self) -> int:
         """Delete all workspace session folders. Returns count of deleted sessions."""
         count = 0
         for slug in self._existing_slugs():
             if self.delete(slug):
+                count += 1
+        return count
+
+    def clean_empty(self) -> int:
+        """Delete all workspace sessions that have zero messages and no artifacts/notes."""
+        count = 0
+        for slug in self._existing_slugs():
+            path = WORKSPACE_ROOT / slug
+            ws = WorkspaceSession.load(slug)
+            
+            # Check for content in subdirectories
+            has_notes = False
+            notes_dir = path / WorkspaceSession.NOTES_DIR
+            if notes_dir.exists():
+                has_notes = any(notes_dir.iterdir())
+                
+            has_artifacts = False
+            artifacts_dir = path / WorkspaceSession.ARTIFACTS_DIR
+            if artifacts_dir.exists():
+                has_artifacts = any(artifacts_dir.iterdir())
+
+            if not ws:
+                # Orphaned folder (no session.json). If no content, delete.
+                if not has_notes and not has_artifacts:
+                    shutil.rmtree(path)
+                    count += 1
+                continue
+                
+            if not ws.messages and not has_notes and not has_artifacts:
+                self.delete(slug)
                 count += 1
         return count
 

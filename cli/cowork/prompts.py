@@ -129,16 +129,6 @@ Conversation:
 Return a structured summary starting with: [CONVERSATION SUMMARY]\
 """
 
-# ─── Session Title Generation ─────────────────────────────────────────────────
-# Used by GeneralPurposeAgent.generate_title().
-# Uses {first_user}.
-
-TITLE_GENERATION_PROMPT = """\
-Generate a short, descriptive title (3–6 words) for a conversation that begins with:
-\"{first_user}\"
-Return ONLY the title — no quotes, no punctuation at the end.\
-"""
-
 # ─── Task Goal Template ───────────────────────────────────────────────────────
 # Used as a hint for the AI when writing a task_goal to the scratchpad.
 # Not injected by the system; referenced in AGENT_SYSTEM_PROMPT guidance.
@@ -278,4 +268,26 @@ Input Triplets:
 
 Return ONLY valid JSON:
 {{"triplets": [{{"subject": "...", "predicate": "...", "object": "..."}}]}}
+"""
+# ─── Session Re-titling ───────────────────────────────────────────────────────
+# Used for batch renaming of session titles.
+# Uses {content}, {unique_id}.
+
+SESSION_RE_TITLE_PROMPT = """\
+Generate a meaningful title for the conversation content provided below.
+
+Rules:
+1. The title must be exactly 12 words long.
+2. All words must be lowercase.
+3. Words must be separated by dashes (-).
+4. Start the title with the unique identifier provided: "{unique_id}-".
+5. The 12 words should capture the essence of the conversation.
+
+Example output:
+0001-deep-dive-into-quantum-physics-and-its-applications-in-modern-technology-today
+
+Content:
+{content}
+
+Return ONLY the generated title.\
 """

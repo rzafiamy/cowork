@@ -8,7 +8,7 @@ This is the dedicated command-line reference for `cowork`, grouped by category.
 
 - Root command (no global options)
 - Subcommands (each defines its own options)
-- Nested command groups: `mm` and `cron`
+- Nested command groups: `mm`, `cron`, and `sessions`
 
 Because options are subcommand-scoped, use:
 
@@ -71,9 +71,33 @@ Runtime behavior notes:
 
 ## 3. Session and State Commands
 
-### `cowork sessions`
+### `cowork sessions` (or `cowork session`)
 
-List saved sessions.
+Manage saved conversation sessions.
+
+Actions:
+
+- `list` (default): list saved sessions
+- `rm <index>`: permanently delete a session by its list index
+- `retitle`: batch re-title all sessions using AI analysis (exactly 12 words, dash-separated)
+- `search <pattern>`: regex-based search across titles, content, summaries, and triplets
+
+Options for `search`:
+
+- `--title <regex>`: match only titles
+- `--content <regex>`: match only message content
+- `--summary <regex>`: match only session summaries
+- `--triplets <regex>`: match only knowledge triplets
+
+Examples:
+
+```bash
+cowork sessions
+cowork session rm 5
+cowork sessions retitle
+cowork session search --title "quantum"
+cowork session search "[0-9]{4}-logic"
+```
 
 ### `cowork jobs [action]`
 
@@ -247,7 +271,10 @@ These are chat-time commands, not shell subcommands:
 
 - `/help`
 - `/new`
-- `/sessions`
+- `/sessions`, `/session`
+- `/sessions rm <index>`
+- `/sessions retitle`
+- `/sessions search <regex>`
 - `/load <session_id_or_number>`
 - `/jobs`, `/jobs clean`, `/jobs resume <job_id>`
 - `/config`, `/config set <key> <value>`
@@ -279,3 +306,16 @@ Trace files are written to:
 
 - `~/.cowork/workspace/<session-slug>/traces/*.jsonl` (workspace-backed sessions)
 - `~/.cowork/traces/<session_id>/*.jsonl` (fallback)
+
+## 11. CLI Lifecycle & Boot Sequence
+
+Every time the `cowork` CLI is invoked, it follows a standard initialization sequence to ensure environment integrity and clean state:
+
+1.  **Firewall Verification**: Validates the integrity of `firewall.yaml` to ensure security policies are loadable.
+2.  **Ghost Session Cleanup**: Automatically scans the `~/.cowork/sessions/` directory and permanently deletes any "empty" sessions (files with zero messages). This prevents clutter from abandoned CLI starts.
+3.  **Config Validation**: Checks if `~/.cowork/config.json` exists and contains required keys. If not, it triggers the interactive `setup` wizard.
+4.  **Session Initialization**: 
+    *   If `--session-id` is provided, it attempts to load that specific session.
+    *   Otherwise, it starts as a fresh session.
+5.  **Background Services**: Starts the background cron scheduler to monitor and execute pending agentic jobs.
+6.  **UI Welcome**: Renders the dashboard showing current model, endpoint connectivity, and session status (in interactive mode).

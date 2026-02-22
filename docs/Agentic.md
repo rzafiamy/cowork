@@ -37,6 +37,12 @@ Welcome to the **Architectural Nerve Center** for the Makix Enterprise Agentic S
 - 🚧 **Execution Gateways**: Schema validation and safety clamps.
 - 📊 **Operational Mapping**: System-wide limits and settings matrix.
 
+### 5️⃣ [Data & Relational Architecture](./new_docs/11_Concept_Relationships.md)
+> *Schema, cascading logic, and entity mapping.*
+- 🗺️ **ER Diagrams** for session-workspace linking.
+- 🔄 **Cascading Logic**: Deletion and renaming propagation rules.
+- 📁 **Path Mapping**: Logical-to-physical storage translation.
+
 ---
 
 ## 🛠️ Developer Quick-Check

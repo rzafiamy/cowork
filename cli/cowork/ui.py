@@ -324,6 +324,7 @@ def render_session_list(sessions: list[dict]) -> None:
     )
     table.add_column("#", style="muted", width=4, justify="right")
     table.add_column("Title", style="bold_white", min_width=20)
+    table.add_column("Workspace Folder", style="accent", min_width=15)
     table.add_column("Messages", justify="center", style="highlight")
     table.add_column("Last Active", style="dim_text")
     table.add_column("Session ID", style="muted", width=10)
@@ -333,6 +334,7 @@ def render_session_list(sessions: list[dict]) -> None:
         table.add_row(
             str(i),
             s.get("title", "Untitled")[:40],
+            s.get("slug", "—"),
             str(s.get("message_count", 0)),
             updated,
             s.get("session_id", "")[:8],
@@ -825,6 +827,9 @@ def render_help() -> None:
         ("/help",                          "Show this help message"),
         ("/new",                            "Start a new session"),
         ("/sessions",                       "List all sessions"),
+        ("/sessions rm <index>",            "Delete a session by index"),
+        ("/sessions retitle",               "Batch re-title all sessions via AI analysis"),
+        ("/sessions search <q>",            "Regex search sessions (use --title/--content)"),
         ("/load <id>",                      "Load a session by ID or number"),
         ("/memory",                         "Show memory dashboard (summary + facts)"),
         ("/memory search <query>",           "Explicit vector search for persona facts"),
@@ -939,6 +944,9 @@ SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/help",                    "Show all available commands"),
     ("/new",                     "Start a fresh session"),
     ("/sessions",                "List all saved sessions"),
+    ("/sessions rm ",            "Delete a session by index  e.g. /sessions rm 5"),
+    ("/sessions retitle",        "Batch re-title all sessions using AI analysis"),
+    ("/sessions search ",        "Regex-based search across sessions"),
     ("/load ",                   "Load session by ID or number  e.g. /load 1"),
     ("/workspace",               "Show current session workspace folder"),
     ("/workspace list",          "List all workspace sessions"),

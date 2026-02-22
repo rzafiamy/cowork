@@ -45,6 +45,7 @@ from .config import (
 from .cron import CronManager
 from .memoria import Memoria
 from .workspace import WorkspaceSession, workspace_manager, WORKSPACE_ROOT
+from .prompts import SESSION_RE_TITLE_PROMPT
 from .tools import get_all_available_tools
 from .tracing import (
     WorkflowTraceLogger,
@@ -297,6 +298,10 @@ async def run_agent_turn(
                         new_ws = workspace_manager.rename(old_slug, title)
                         if new_ws:
                             session._ws = new_ws
+                            session.workspace_slug = new_ws.slug
+                            session.save() # Persist the title and new slug
+                            render_success(f"🏷️  Session re-titled: [highlight]{title}[/highlight]")
+                            render_success(f"📂 Workspace moved to: [dim_text]workspace/{new_ws.slug}/[/dim_text]")
             except Exception:
                 pass
 
@@ -415,10 +420,12 @@ async def handle_command(
 
     elif command == "/new":
         new_session = Session(title="New Session")
-        new_session.save()
         # Create matching workspace session
-        ws = workspace_manager.create("New Session")
+        ws = workspace_manager.create("New Session", session_id=new_session.session_id)
         new_session._ws = ws
+        new_session.workspace_slug = ws.slug
+        new_session.save()
+        # Point scratchpad to workspace folder
         # Point scratchpad to workspace folder
         new_scratchpad = Scratchpad.__new__(Scratchpad)
         new_scratchpad.session_id = new_session.session_id
@@ -432,9 +439,107 @@ async def handle_command(
         )
         return True, new_session, False
 
-    elif command == "/sessions":
-        updated = Session.list_all()
-        render_session_list(updated)
+    elif command in ("/sessions", "/session"):
+        sub = parts[1].lower() if len(parts) > 1 else "list"
+        if sub == "list":
+            updated = Session.list_all()
+            render_session_list(updated)
+        elif sub == "rm":
+            if len(parts) < 3:
+                render_error("Usage: /sessions rm <index>")
+            else:
+                try:
+                    idx = int(parts[2])
+                    all_s = Session.list_all()
+                    if 1 <= idx <= len(all_s):
+                        s_info = all_s[idx - 1]
+                        s_obj = Session.load(s_info["session_id"])
+                        if s_obj:
+                            if click.confirm(f"🗑️  Delete session '{s_info['title']}'?", default=False):
+                                if s_obj.delete():
+                                    render_success(f"Session deleted: {s_info['title']}")
+                                else:
+                                    render_error("Failed to delete session file.")
+                        else:
+                            render_error("Session could not be loaded.")
+                    else:
+                        render_error(f"Invalid index {idx}.")
+                except ValueError:
+                    render_error("Index must be a number.")
+        elif sub == "retitle":
+            # Delegate to the logic (or just show a message that it's a CLI-only heavy task if preferred)
+            # Actually we can run it here too.
+            async def _slash_retitle():
+                all_sessions_info = Session.list_all()
+                api_client_inner = api_client
+                count = 0
+                with ThinkingSpinner(f"Analyzing {len(all_sessions_info)} sessions"):
+                    for i, s_info in enumerate(all_sessions_info, 1):
+                        session_obj = Session.load(s_info["session_id"])
+                        if not session_obj or not session_obj.messages:
+                            continue
+                        content = session_obj.get_sandwich_content(max_chars=1200)
+                        unique_num = f"{i:04d}"
+                        prompt = SESSION_RE_TITLE_PROMPT.format(unique_id=unique_num, content=content)
+                        try:
+                            # Note: using api_client from the outer scope
+                            res = await api_client_inner.chat(
+                                messages=[{"role": "user", "content": prompt}],
+                                model=_config.get("model_compress"),
+                                temperature=0.0,
+                            )
+                            new_title_val = res.get("content", "").strip().strip('"').strip("'")
+                            if new_title_val:
+                                session_obj.title = new_title_val
+                                # Sync workspace if it exists
+                                ws_link = None
+                                if session_obj.workspace_slug:
+                                    ws_link = workspace_manager.rename(session_obj.workspace_slug, new_title_val)
+                                else:
+                                    # Try to find by ID
+                                    for wi in workspace_manager.list_all():
+                                        if wi["session_id"] == session_obj.session_id:
+                                            ws_link = workspace_manager.rename(wi["slug"], new_title_val)
+                                            break
+                                if ws_link:
+                                    session_obj.workspace_slug = ws_link.slug
+                                
+                                session_obj.save()
+                                count += 1
+                        except Exception:
+                            pass
+                render_success(f"✅ Successfully re-titled {count} sessions.")
+                render_session_list(Session.list_all())
+            
+            # Since handle_command is async, we can just await this or create a task
+            await _slash_retitle()
+
+        elif sub == "search":
+            pattern = parts[2] if len(parts) > 2 else ""
+            if not pattern:
+                render_error("Usage: /sessions search <regex>")
+            else:
+                results = []
+                all_s = Session.list_all()
+                with ThinkingSpinner(f"Searching {len(all_s)} sessions"):
+                    for s_info in all_s:
+                        s_obj = Session.load(s_info["session_id"])
+                        if s_obj and s_obj.match(pattern):
+                            results.append({
+                                "session_id": s_obj.session_id,
+                                "title": s_obj.title,
+                                "created_at": s_obj.created_at,
+                                "updated_at": s_obj.updated_at,
+                                "message_count": len(s_obj.messages),
+                            })
+                if results:
+                    render_success(f"🔍 Found {len(results)} matching sessions.")
+                    render_session_list(results)
+                else:
+                    render_warning(f"No matches found for '{pattern}'.")
+        else:
+            updated = Session.list_all()
+            render_session_list(updated)
 
     elif command == "/load":
         if len(parts) < 2:
@@ -469,10 +574,6 @@ async def handle_command(
                 return True, loaded, False
             else:
                 render_error(f"Session '{target}' not found.")
-
-    elif command == "/sessions":
-        updated = Session.list_all()
-        render_session_list(updated)
 
     elif command == "/jobs":
         sub = parts[1].lower() if len(parts) > 1 else ""
@@ -1103,6 +1204,12 @@ def cli(ctx: click.Context) -> None:
     """
     _verify_firewall_integrity()
 
+    # Auto-clean ghost sessions (empty) at start
+    s_deleted = Session.clean_empty()
+    ws_deleted = workspace_manager.clean_empty()
+    if s_deleted > 0 or ws_deleted > 0:
+        render_success(f"🧹 Auto-cleaned {s_deleted} empty session(s) and {ws_deleted} empty workspace(s).")
+
     if ctx.invoked_subcommand is None:
         # Default: start interactive chat
         ctx.invoke(chat)
@@ -1129,20 +1236,31 @@ def chat(session_id: Optional[str], no_banner: bool, trace: Optional[bool]) -> N
         if not session:
             render_error(f"Session '{session_id}' not found.")
             session = Session(title="New Session")
+        
         # Try to link workspace session
-        for ws_info in workspace_manager.list_all():
-            if ws_info["session_id"] == session.session_id:
-                ws = WorkspaceSession.load(ws_info["slug"])
-                if ws:
-                    session._ws = ws
-                    console.print(f"  [dim_text]📂 Workspace: workspace/{ws.slug}/[/dim_text]")
-                break
+        ws = None
+        if session.workspace_slug:
+            ws = WorkspaceSession.load(session.workspace_slug)
+        
+        if not ws:
+            # Fallback scan
+            for ws_info in workspace_manager.list_all():
+                if ws_info["session_id"] == session.session_id:
+                    ws = WorkspaceSession.load(ws_info["slug"])
+                    break
+        
+        if ws:
+            session._ws = ws
+            session.workspace_slug = ws.slug # Update if it was missing/changed
+            session.save()
+            console.print(f"  [dim_text]📂 Workspace: workspace/{ws.slug}/[/dim_text]")
     else:
         session = Session(title="New Session")
-        session.save()
         # Create matching workspace session
-        ws = workspace_manager.create("New Session")
+        ws = workspace_manager.create("New Session", session_id=session.session_id)
         session._ws = ws
+        session.workspace_slug = ws.slug
+        session.save()
         console.print(f"  [dim_text]📂 Workspace: workspace/{ws.slug}/[/dim_text]")
 
     api_client = _make_api_client()
@@ -1206,12 +1324,154 @@ def run(prompt: str, session_id: Optional[str], model: Optional[str], no_stream:
     asyncio.run(_run())
 
 
-@cli.command()
-def sessions() -> None:
+@cli.group(name="sessions", invoke_without_command=True)
+@click.pass_context
+def sessions(ctx: click.Context) -> None:
+    """Manage saved conversation sessions."""
+    if ctx.invoked_subcommand is None:
+        print_banner()
+        all_sessions = Session.list_all()
+        render_session_list(all_sessions)
+
+
+@sessions.command(name="list")
+def sessions_list() -> None:
     """List all saved sessions."""
     print_banner()
     all_sessions = Session.list_all()
     render_session_list(all_sessions)
+
+
+@sessions.command(name="rm")
+@click.argument("index", type=int)
+def sessions_rm(index: int) -> None:
+    """Permanently delete a session by index."""
+    all_sessions = Session.list_all()
+    if 1 <= index <= len(all_sessions):
+        s_info = all_sessions[index - 1]
+        session_id = s_info["session_id"]
+        session = Session.load(session_id)
+        if session:
+            if click.confirm(f"🗑️  Delete session '{s_info['title']}'?", default=False):
+                if session.delete():
+                    render_success(f"Session deleted: {s_info['title']}")
+                else:
+                    render_error("Failed to delete session file.")
+        else:
+            render_error(f"Session {session_id} could not be loaded.")
+    else:
+        render_error(f"Invalid index {index}. (Current range: 1 to {len(all_sessions)})")
+
+
+@sessions.command(name="retitle")
+@click.option("--limit", default=300, help="Max tokens of content for analysis")
+def sessions_retitle(limit: int) -> None:
+    """Batch re-title all sessions using AI analysis."""
+    print_banner()
+    all_sessions_info = Session.list_all()
+    if not all_sessions_info:
+        render_warning("No sessions found.")
+        return
+
+    async def _run_retitle():
+        api_client = _make_api_client()
+        count = 0
+        
+        with ThinkingSpinner(f"Analyzing {len(all_sessions_info)} sessions"):
+            for i, s_info in enumerate(all_sessions_info, 1):
+                session = Session.load(s_info["session_id"])
+                if not session or not session.messages:
+                    continue
+                
+                # Sandwich of content (approx 4 chars per token)
+                content = session.get_sandwich_content(max_chars=limit * 4)
+                # Unique number at beginning (4 digits)
+                unique_num = f"{i:04d}"
+                
+                prompt = SESSION_RE_TITLE_PROMPT.format(unique_id=unique_num, content=content)
+                try:
+                    res = await api_client.chat(
+                        messages=[{"role": "user", "content": prompt}],
+                        model=_config.get("model_compress"),
+                        temperature=0.0,
+                    )
+                    new_title = res.get("content", "").strip()
+                    new_title = new_title.strip('"').strip("'")
+                    if new_title:
+                        session.title = new_title
+                        session.save()
+                        count += 1
+                except Exception:
+                    pass
+        
+        await api_client.close()
+        render_success(f"✅ Successfully re-titled {count} sessions.")
+        render_session_list(Session.list_all())
+
+    asyncio.run(_run_retitle())
+
+
+@sessions.command(name="search")
+@click.argument("query", required=False)
+@click.option("--title", help="Regex to match against session titles")
+@click.option("--content", help="Regex to match against message contents")
+@click.option("--summary", help="Regex to match against session summaries")
+@click.option("--triplets", "triplets_opt", help="Regex to match against knowledge triplets")
+def sessions_search(query: Optional[str], title: Optional[str], content: Optional[str], summary: Optional[str], triplets_opt: Optional[str]) -> None:
+    """Powerful regex-based search across sessions."""
+    print_banner()
+    all_sessions_info = Session.list_all()
+    if not all_sessions_info:
+        render_warning("No sessions found.")
+        return
+
+    fields = []
+    if title: fields.append("title")
+    if content: fields.append("content")
+    if summary: fields.append("summary")
+    if triplets_opt: fields.append("triplets")
+    
+    # If no specific fields, check title, content, summary, and triplets by default
+    if not fields:
+        fields = ["title", "content", "summary", "triplets"]
+
+    pattern = query or title or content or summary or triplets_opt
+    if not pattern:
+        render_error("No search pattern provided.", hint="Usage: sessions search <pattern> OR use --title/--content/--summary")
+        return
+
+    results = []
+    with ThinkingSpinner(f"Searching through {len(all_sessions_info)} sessions"):
+        for s_info in all_sessions_info:
+            session = Session.load(s_info["session_id"])
+            if session and session.match(pattern, fields=fields):
+                # We need to re-extract the info for display
+                results.append({
+                    "session_id": session.session_id,
+                    "title": session.title,
+                    "created_at": session.created_at,
+                    "updated_at": session.updated_at,
+                    "message_count": len(session.messages),
+                })
+
+    if results:
+        render_success(f"🔍 Found {len(results)} matching sessions.")
+        render_session_list(results)
+    else:
+        render_warning(f"No matches found for '{pattern}'.")
+
+
+@cli.group(name="session")
+@click.pass_context
+def session_cmd(ctx: click.Context) -> None:
+    """Session management (singular alias)."""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(sessions)
+
+session_cmd.add_command(sessions_list, name="list")
+session_cmd.add_command(sessions_rm, name="rm")
+session_cmd.add_command(sessions_retitle, name="retitle")
+session_cmd.add_command(sessions_search, name="search")
 
 
 @cli.command()

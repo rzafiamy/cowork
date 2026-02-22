@@ -2,7 +2,7 @@
 
 Cowork adopts a highly file-system driven approach to persistence. All application state, from API configurations to chat history and generated artifacts, is localized to the `~/.cowork/` directory.
 
-To ensure clarity and maintain an enterprise-grade separation of concerns, the directory is segmented into distinct concepts: **Memory**, **Workspaces**, and **Storage**.
+To ensure clarity and maintain an enterprise-grade separation of concerns, the directory is segmented into distinct concepts: **Memory**, **Workspaces**, and **Storage**. For a detailed view of how these folders relate to each other logically, see **[11. Concept & Data Relationships](./11_Concept_Relationships.md)**.
 
 ## The `~/.cowork/` Root Directory
 
