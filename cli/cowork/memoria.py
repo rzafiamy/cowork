@@ -138,6 +138,7 @@ def _open_db() -> tuple[sqlite3.Connection, bool]:
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS kg_triplets (
             id          TEXT PRIMARY KEY,
+            session_id  TEXT,
             user_id     TEXT NOT NULL,
             subject     TEXT NOT NULL,
             predicate   TEXT NOT NULL,
@@ -154,6 +155,20 @@ def _open_db() -> tuple[sqlite3.Connection, bool]:
             updated_at  TEXT NOT NULL
         );
     """)
+
+    # 🛠️ Migration: Add session_id column and index to existing databases
+    try:
+        cursor = conn.execute("PRAGMA table_info(kg_triplets)")
+        columns = [row["name"] for row in cursor.fetchall()]
+        if "session_id" not in columns:
+            conn.execute("ALTER TABLE kg_triplets ADD COLUMN session_id TEXT")
+            conn.commit()
+        
+        # Ensure index is created after column exists
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_kg_session ON kg_triplets(session_id)")
+        conn.commit()
+    except Exception:
+        pass
 
     if vec_available:
         try:
@@ -515,10 +530,11 @@ class Memoria:
 
                         self._db.execute(
                             """INSERT INTO kg_triplets
-                               (id, user_id, subject, predicate, object, embedding, created_at)
-                               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                               (id, session_id, user_id, subject, predicate, object, embedding, created_at)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                             (
                                 triplet_id,
+                                self.session_id,
                                 self.user_id,
                                 str(t["subject"])[:200],
                                 str(t["predicate"])[:200],
@@ -590,10 +606,11 @@ class Memoria:
 
                     self._db.execute(
                         """INSERT OR IGNORE INTO kg_triplets
-                           (id, user_id, subject, predicate, object, embedding, created_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                           (id, session_id, user_id, subject, predicate, object, embedding, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
                             triplet_id,
+                            self.session_id,
                             self.user_id,
                             str(t["subject"])[:200],
                             str(t["predicate"])[:200],
@@ -654,10 +671,11 @@ class Memoria:
 
         self._db.execute(
             """INSERT INTO kg_triplets
-               (id, user_id, subject, predicate, object, embedding, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (id, session_id, user_id, subject, predicate, object, embedding, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 triplet_id,
+                self.session_id,
                 self.user_id,
                 str(subject)[:200],
                 str(predicate)[:200],
