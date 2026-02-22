@@ -22,7 +22,12 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .config import CONFIG_DIR
-from .prompts import CONTEXT_FUSION_TEMPLATE, SESSION_SUMMARY_PROMPT, TRIPLET_EXTRACTION_PROMPT
+from .prompts import (
+    CONTEXT_FUSION_TEMPLATE,
+    MEMORY_CONSOLIDATION_PROMPT,
+    SESSION_SUMMARY_PROMPT,
+    TRIPLET_EXTRACTION_PROMPT,
+)
 from .theme import OP_DEFAULTS
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
@@ -196,6 +201,7 @@ class Memoria:
             "memory_high_similarity_bypass",
             OP_DEFAULTS["memory_high_similarity_bypass"],
         )
+        self.kg_limit = config.get("memory_kg_limit_triplets", OP_DEFAULTS["memory_kg_limit_triplets"])
 
         self._db, self._vec_available = _open_db()
         self._embedder = _LocalEmbedder.get()
@@ -449,6 +455,87 @@ class Memoria:
             )
         except Exception:
             pass  # Memory failures are non-fatal
+
+        # Automatic consolidation if limit reached
+        try:
+            current_count = self.get_triplet_count()
+            if current_count > self.kg_limit:
+                await self.consolidate()
+        except Exception:
+            pass
+
+    async def consolidate(self) -> None:
+        """
+        Consolidate Knowledge Graph to remove redundancy and stay within limits.
+        Uses LLM to merge triplets.
+        """
+        all_triplets = self.get_all_triplets()
+        if not all_triplets:
+            return
+
+        formatted = "\n".join(
+            [f"{t['subject']} | {t['predicate']} | {t['object']}" for t in all_triplets]
+        )
+
+        prompt = MEMORY_CONSOLIDATION_PROMPT.format(triplets=formatted)
+        
+        try:
+            result = await self.api_client.chat(
+                messages=[{"role": "user", "content": prompt}],
+                model=self.config.get("model_text"),
+                temperature=0.1,
+                response_format={"type": "json_object"},
+            )
+            content = result.get("content", "{}")
+            parsed = json.loads(content)
+            new_triplets = parsed.get("triplets", [])
+
+            if new_triplets:
+                # 1. Clear existing
+                self._db.execute("DELETE FROM kg_triplets WHERE user_id = ?", (self.user_id,))
+                try:
+                    self._db.execute("DELETE FROM kg_vec WHERE id NOT IN (SELECT id FROM kg_triplets)")
+                except Exception:
+                    pass
+                
+                # 2. Insert consolidated ones
+                for t in new_triplets:
+                    if isinstance(t, dict) and all(k in t for k in ("subject", "predicate", "object")):
+                        triplet_id = str(uuid.uuid4())
+                        triplet_text = f"{t['subject']} {t['predicate']} {t['object']}"
+                        
+                        embedding: Optional[bytes] = None
+                        if self._embedder:
+                            embedding = self._embedder.encode(triplet_text)
+
+                        self._db.execute(
+                            """INSERT INTO kg_triplets
+                               (id, user_id, subject, predicate, object, embedding, created_at)
+                               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                            (
+                                triplet_id,
+                                self.user_id,
+                                str(t["subject"])[:200],
+                                str(t["predicate"])[:200],
+                                str(t["object"])[:200],
+                                embedding,
+                                datetime.utcnow().isoformat(),
+                            ),
+                        )
+                        if embedding:
+                            try:
+                                self._db.execute(
+                                    "INSERT INTO kg_vec(id, embedding) VALUES (?, ?)",
+                                    (triplet_id, embedding),
+                                )
+                            except Exception:
+                                pass
+                
+                self._db.commit()
+                return True
+        except Exception:
+            pass
+        return False
 
     async def _process_triplets(self, user_message: str) -> None:
         """Extract knowledge triplets from user message and save to KG."""

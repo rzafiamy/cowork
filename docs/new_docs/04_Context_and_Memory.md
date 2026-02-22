@@ -13,12 +13,13 @@ Memoria provides the agent with "Personality" and "Past".
 * **Triplet Extraction:** Facts are extracted as Subject-Predicate-Object triplets (e.g. `(User, prefers, Python)`).
 * **Local Vector Search:** Embeds the triplets with `all-MiniLM-L6-v2` and searches via local SQLite (`sqlite-vec`).
 * **Temporal Decay:** Memoria uses Exponential Weighted Average (EWA) decay. A memory's relevance score is the product of its semantic similarity and an exponential time decay factor.
+* **Knowledge Consolidation:** When triplets exceed a configurable limit (`memory_kg_limit_triplets`, default 100), the system automatically triggers an LLM-led consolidation turn to merge redundant facts into more concise ones.
 
 ### Memoria Lifecycle Summary
 
 | Component | Created | Updated | Primary Use | Retention / Deletion |
 | :--- | :--- | :--- | :--- | :--- |
-| **Knowledge Triplets** | User turn (Fact extraction) | N/A (Immutable facts) | Persona personalization | Persistent / Global |
+| **Knowledge Triplets** | User turn (Fact extraction) | **Consolidation** (Deduplication) | Persona personalization | Persistent / Global |
 | **Session Summary** | First turn of session | After every turn | Rolling session continuity | Persistent per session |
 | **Vector Index** | First triplet ingestion | After new fact extraction | Semantic memory retrieval | Persistent / Rebuilt for sync |
 | **`memoria.db`** | App initialization | After every durable turn | Central storage (SQLite) | Persistent / Global |

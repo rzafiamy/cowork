@@ -754,7 +754,7 @@ async def handle_command(
         sub = parts[1].lower() if len(parts) > 1 else ""
         if not sub or sub == "list" or sub == "view":
             from .ui import render_memory_dashboard
-            render_memory_dashboard(memoria.get_summary(), memoria.get_all_triplets())
+            render_memory_dashboard(memoria.get_summary(), memoria.get_all_triplets(), memoria.kg_limit)
         elif sub == "rm":
             if len(parts) < 3:
                 render_error("Usage: /memory rm <id>")
@@ -779,10 +779,21 @@ async def handle_command(
         elif sub == "summarize":
             # Just show the summary in a dedicated panel
             from .ui import render_memory_dashboard
-            render_memory_dashboard(memoria.get_summary(), [])
+            render_memory_dashboard(memoria.get_summary(), [], memoria.kg_limit)
+        elif sub in ("compress", "consolidate"):
+            with ThinkingSpinner("Consolidating knowledge graph"):
+                # Run the async consolidation in the event loop
+                success = await memoria.consolidate()
+            if success:
+                render_success("🧠 Memory consolidated & redundancy removed.")
+                # Show updated status
+                from .ui import render_memory_dashboard
+                render_memory_dashboard(memoria.get_summary(), memoria.get_all_triplets(), memoria.kg_limit)
+            else:
+                render_error("Memory consolidation failed or no changes needed.")
         else:
             from .ui import render_memory_dashboard
-            render_memory_dashboard(memoria.get_summary(), memoria.get_all_triplets())
+            render_memory_dashboard(memoria.get_summary(), memoria.get_all_triplets(), memoria.kg_limit)
 
     elif command == "/tools":
         render_tools_list(get_all_available_tools())
@@ -1216,7 +1227,7 @@ def memory() -> None:
     api_client = _make_api_client()
     user_id = _get_memory_user_id()
     mem = Memoria(user_id, "status_check", api_client, _config)
-    render_memory_status(mem.get_triplet_count(), mem.get_summary())
+    render_memory_status(mem.get_triplet_count(), mem.get_summary(), mem.kg_limit)
 
     # Show RAG mode
     if mem.is_semantic_search_available():

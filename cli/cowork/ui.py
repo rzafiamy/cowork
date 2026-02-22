@@ -367,12 +367,19 @@ def render_config(config_data: dict) -> None:
 
 # ─── Memory Display ───────────────────────────────────────────────────────────
 
-def render_memory_status(triplet_count: int, summary: str) -> None:
+def render_memory_status(triplet_count: int, summary: str, triplet_limit: int = 100) -> None:
     """Render Memoria status."""
     grid = Table.grid(padding=(0, 2))
     grid.add_column(style="muted", justify="right", width=16)
     grid.add_column()
-    grid.add_row("Knowledge Facts", f"[memory]{triplet_count}[/memory] triplets in graph")
+    
+    # Progress visualization for KG limit
+    pct = (triplet_count / triplet_limit) if triplet_limit > 0 else 0
+    bar_len = int(pct * 10)
+    bar = "█" * min(10, bar_len) + "░" * max(0, 10 - bar_len)
+    bar_color = "success" if pct < 0.7 else "warning" if pct < 0.9 else "error"
+    
+    grid.add_row("Knowledge Facts", f"[memory]{triplet_count}/{triplet_limit}[/memory] [{bar_color}]{bar}[/{bar_color}]")
     grid.add_row("Session Summary", f"[dim_text]{summary[:100] + '...' if len(summary) > 100 else summary or '(none yet)'}[/dim_text]")
 
     console.print(Panel(
@@ -509,7 +516,7 @@ def render_cron_result(job: Any) -> None:
 
 # ─── Memory Dashboard ──────────────────────────────────────────────────────────
 
-def render_memory_dashboard(summary: str, triplets: list[dict]) -> None:
+def render_memory_dashboard(summary: str, triplets: list[dict], triplet_limit: int = 500) -> None:
     """Render a comprehensive view of the agent's memory."""
     
     # 1. Session Summary
@@ -546,7 +553,7 @@ def render_memory_dashboard(summary: str, triplets: list[dict]) -> None:
 
     kg_panel = Panel(
         table if triplets else "[muted]No long-term persona facts found.[/muted]",
-        title=f"[sentinel]🧠 Knowledge Graph ({len(triplets)} facts)[/sentinel]",
+        title=f"[sentinel]🧠 Knowledge Graph ({len(triplets)}/{triplet_limit} facts)[/sentinel]",
         border_style="sentinel",
     )
 
@@ -779,7 +786,7 @@ def render_help() -> None:
         ("/load <id>",                      "Load a session by ID or number"),
         ("/memory",                         "Show memory dashboard (summary + facts)"),
         ("/memory rm <id>",                 "Delete a memory fact by ID"),
-        ("/memory summarize",               "Show current session summary"),
+        ("/memory compress",               "Consolidate Knowledge Graph / deduplicate"),
         ("/memory clear",                   "Clear all session and persona memory"),
         ("/jobs",                           "Show Sentinel job dashboard"),
         ("/jobs clean",                     "Wipe all job history"),
@@ -906,7 +913,7 @@ SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/cron rm ",                       "Remove a cron job  e.g. /cron rm abc12345"),
     ("/memory",                         "Show memory dashboard"),
     ("/memory rm ",                      "Delete a memory fact  e.g. /memory rm 12345678"),
-    ("/memory summarize",               "Show current session summary"),
+    ("/memory compress",               "Consolidate KG (deduplicate/merge)"),
     ("/memory clear",                   "Wipe all persona/session memory"),
     ("/ai",                      "List saved AI profiles"),
     ("/ai add ",                 "Add AI profile  e.g. /ai add gpt4 https://api.openai.com/v1 gpt-4o"),

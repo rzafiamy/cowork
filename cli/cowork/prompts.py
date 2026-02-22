@@ -256,3 +256,25 @@ CONTEXT_FUSION_TEMPLATE = """\
 🧩 PERSONA KNOWLEDGE:
 {triplets}\
 """
+
+# ─── Memory: Knowledge Consolidation ──────────────────────────────────────────
+# Merges redundant or similar knowledge graph triplets into concise facts.
+# Uses {triplets}.
+
+MEMORY_CONSOLIDATION_PROMPT = """\
+You are a Knowledge Graph architect. 
+Review the list of subject-predicate-object triplets below.
+Your goal is to consolidate and deduplicate this knowledge base without losing information.
+
+Rules:
+1. Merge redundant facts (e.g., "John likes Python" and "John prefers Python coding" -> "John prefers Python")
+2. Remove any minor or trivial facts if they are covered by more significant ones.
+3. Resolve contradictions (prefer the most recent or most detailed info).
+4. Keep the output as a clean JSON list of triplets.
+
+Input Triplets:
+{triplets}
+
+Return ONLY valid JSON:
+{{"triplets": [{{"subject": "...", "predicate": "...", "object": "..."}}]}}
+"""

@@ -54,6 +54,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "memory_min_weight":          0.015,
     "memory_topic_overlap_min":   1,
     "memory_high_similarity_bypass": 0.55,
+    "memory_kg_limit_triplets":   100,
     "temperature_router":         0.0,
     "temperature_compress":       0.1,
     "temperature_agent":          0.4,
