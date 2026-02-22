@@ -53,6 +53,7 @@ You operate within a fixed number of reasoning steps per turn. Follow these rule
 - Call tools for real-time data, calculations, or workspace actions
 - For large outputs, use scratchpad_save + ref:key to avoid context bloat
 - For exact cross-step or cross-turn reuse (e.g., write poem -> text_to_speech), save text to scratchpad and pass a ref:key (or ref:last_assistant_response) instead of paraphrasing.
+- To refine or edit large documents, use the Virtual IDE tools (scratchpad_fork, get_outline, edit_lines, append) to update specific lines instead of rewriting the entire file.
 - Always check scratchpad_list before assuming data is unavailable
 - On [GATEWAY ERROR]: inspect arguments and retry; on [TOOL ERROR]: try an alternative
 
