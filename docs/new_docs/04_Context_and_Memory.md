@@ -1,6 +1,6 @@
 # 4. Context and Memory
 
-The Cowork Agent employs a multi-tiered approach to maintaining state, context, and long-term memory.
+The Cowork Agent employs a multi-tiered approach to maintaining state, context, and long-term memory. See the [Request Anatomy](./agentic/Request_Anatomy.md) for a visual breakdown of how these layers are fused into an LLM prompt.
 
 ## Short-Term Context (Context Compressor)
 When a conversation grows beyond the sliding window buffer (default 6,000 tokens), the Agent preserves factual integrity using Map-Reduce Compression.
