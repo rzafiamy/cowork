@@ -28,7 +28,7 @@ EXTERNAL_CATEGORIES = {
     "NEWS_TOOLS", "WEATHER_TOOLS",
     "MEDIA_TOOLS", "KNOWLEDGE_TOOLS",
     "COMMUNICATION_TOOLS", "GOOGLE_TOOLS",
-    "SOCIAL_TOOLS", "NEXTCLOUD_TOOLS",
+    "SOCIAL_TOOLS", "NEXTCLOUD_TOOLS", "GIT_TOOLS",
 }
 
 def get_tools_for_categories(categories: List[str]) -> List[Dict[str, Any]]:

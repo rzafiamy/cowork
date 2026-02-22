@@ -124,6 +124,7 @@ class MetaRouter:
             "UTILITY": "DATA_AND_UTILITY",
             "DATA": "DATA_AND_UTILITY",
             "NEXTCLOUD": "NEXTCLOUD_TOOLS",
+            "GIT": "GIT_TOOLS",
             "CONVERSATION": "CONVERSATIONAL",
             "CHAT": "CONVERSATIONAL",
         }
@@ -148,6 +149,7 @@ class MetaRouter:
             ("COMM", "COMMUNICATION_TOOLS"),
             ("SCRATCH", "SESSION_SCRATCHPAD"),
             ("NEXTCLOUD", "NEXTCLOUD_TOOLS"),
+            ("GIT", "GIT_TOOLS"),
         ]
         for needle, canonical in contains_rules:
             if needle in token and canonical in domains:
@@ -377,6 +379,10 @@ class MetaRouter:
         # Nextcloud
         if any(w in p for w in ["nextcloud", "cloud sync", "cloud storage"]):
             categories.append("NEXTCLOUD_TOOLS")
+
+        # Git
+        if any(w in p for w in ["git ", "clone", "commit", "push", "git init", "repository", "github repo"]):
+            categories.append("GIT_TOOLS")
 
         if not categories:
             # General fallbacks
