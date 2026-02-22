@@ -21,6 +21,7 @@ from . import google
 from . import social
 from . import nextcloud
 from . import git
+from . import web_downloader
 
 # Re-export key functions for tools/__init__.py or manager.py if needed
 # But better to aggregate them here.
@@ -31,7 +32,7 @@ EXTERNAL_TOOL_HANDLERS: dict[str, Any] = {}
 # Aggregate from all modules
 _modules = [
     youtube, search, web, news, code, weather, 
-    media, knowledge, communication, google, social, nextcloud, git
+    media, knowledge, communication, google, social, nextcloud, git, web_downloader
 ]
 
 for mod in _modules:
@@ -84,6 +85,7 @@ KEY_REQUIREMENTS: dict[str, str | list[str] | None] = {
     "git_commit":           None,
     "git_push":             None,
     "git_status":           None,
+    "web_download_file":    None,
 }
 
 def get_available_external_tools() -> list[dict]:

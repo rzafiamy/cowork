@@ -150,7 +150,7 @@ ROUTER_CATEGORY_DESCRIPTIONS = {
     "SEARCH_TOOLS": "Web research, fact-finding (Google/Brave Search)",
     "KNOWLEDGE_TOOLS": "Deep topic research (Wikipedia)",
     "YOUTUBE_TOOLS": "YouTube video search, transcripts, metadata",
-    "WEB_TOOLS": "Scrape or read a specific URL (Firecrawl)",
+    "WEB_TOOLS": "Scrape, crawl, or download a specific file from URL (Firecrawl/WebDownloader)",
     "WEATHER_TOOLS": "Current weather and forecasts (OpenWeatherMap)",
     "NEWS_TOOLS": "News headlines and article search (NewsAPI)",
     "CODING_TOOLS": "Coding purpose tool (list/read/search/grep/write/github) for web/python/dev tasks",

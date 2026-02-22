@@ -332,7 +332,7 @@ class MetaRouter:
             categories.append("SEARCH_TOOLS")
         
         # Web & Scraping
-        if any(w in p for w in ["firecrawl", "scrape", "crawl", "website content", "extract", "website", "site web", "extraire", "lien"]):
+        if any(w in p for w in ["firecrawl", "scrape", "crawl", "website content", "extract", "website", "site web", "extraire", "lien", "download file", "download pdf", "fetch file"]):
             categories.append("WEB_TOOLS")
         
         # News
