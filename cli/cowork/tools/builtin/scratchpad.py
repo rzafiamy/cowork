@@ -217,3 +217,219 @@ class ScratchpadUpdateGoalTool(BaseTool):
             f"✅ Task goal anchor saved as {ref}. "
             f"The AI will read this at the start of every follow-up turn to stay oriented."
         )
+
+class ScratchpadForkTool(BaseTool):
+    @property
+    def name(self) -> str:
+        return "scratchpad_fork"
+
+    @property
+    def description(self) -> str:
+        return "Duplicate an existing scratchpad entry to a new key. Useful for non-destructive editing or maintaining a base draft."
+
+    @property
+    def category(self) -> str:
+        return "SESSION_SCRATCHPAD"
+
+    @property
+    def parameters(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "source_key": {"type": "string", "description": "The existing scratchpad key (with or without 'ref:' prefix)"},
+                "dest_key": {"type": "string", "description": "The new key to save the duplicate as (alphanumeric + underscore)"},
+            },
+            "required": ["source_key", "dest_key"],
+        }
+
+    def execute(self, source_key: str, dest_key: str) -> str:
+        self._emit(f"🔀 Forking scratchpad entry: '{source_key}' to '{dest_key}'...")
+        if not self.scratchpad:
+            return "❌ Error: Scratchpad not initialized."
+            
+        content = self.scratchpad.get(source_key)
+        if content is None:
+             return f"⚠️ Source key '{source_key}' not found in scratchpad."
+             
+        # Look up original description
+        original_desc = "Forked entry"
+        items = self.scratchpad.list_all()
+        clean_source = source_key.replace("ref:", "")
+        for item in items:
+            if item["key"] == clean_source:
+                original_desc = item.get("description", "Forked entry")
+                break
+                
+        ref = self.scratchpad.save(dest_key, content, f"{original_desc} (forked)")
+        return f"✅ Forked scratchpad entry. New memory reference: {ref} ({len(content)} chars)"
+
+class ScratchpadGetOutlineTool(BaseTool):
+    @property
+    def name(self) -> str:
+        return "scratchpad_get_outline"
+
+    @property
+    def description(self) -> str:
+        return "Get a structural outline (table of contents) of a scratchpad entry with line numbers. Use this to navigate large documents before editing specific lines."
+
+    @property
+    def category(self) -> str:
+        return "SESSION_SCRATCHPAD"
+
+    @property
+    def parameters(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "key": {"type": "string", "description": "The scratchpad key (with or without 'ref:' prefix)"},
+            },
+            "required": ["key"],
+        }
+
+    def execute(self, key: str) -> str:
+        self._emit(f"📑 Generating outline for: '{key}'...")
+        if not self.scratchpad:
+            return "❌ Error: Scratchpad not initialized."
+            
+        content = self.scratchpad.get(key)
+        if content is None:
+             return f"⚠️ Key '{key}' not found in scratchpad."
+
+        lines = content.split('\n')
+        outline = []
+        
+        # Simple heuristic: Look for Markdown headers or JSON top-level keys
+        for i, line in enumerate(lines):
+            line_num = i + 1
+            stripped = line.strip()
+            if stripped.startswith('#'):
+                outline.append(f"Line {line_num:4d} | {stripped[:60]}")
+            elif stripped.startswith('"') and '":' in stripped and len(stripped) < 40:
+                # Naive JSON key detection
+                outline.append(f"Line {line_num:4d} | {stripped}")
+                
+        total_lines = len(lines)
+        if not outline:
+            return f"Document '{key}' has {total_lines} lines.\nNo semantic headings found. You may need to read chunks to navigate."
+            
+        return f"Outline for '{key}' ({total_lines} total lines):\n" + "\n".join(outline)
+
+class ScratchpadEditLinesTool(BaseTool):
+    @property
+    def name(self) -> str:
+        return "scratchpad_edit_lines"
+
+    @property
+    def description(self) -> str:
+        return "Replace a specific range of lines in a scratchpad entry. Use scratchpad_get_outline first to find the correct line numbers."
+
+    @property
+    def category(self) -> str:
+        return "SESSION_SCRATCHPAD"
+
+    @property
+    def parameters(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "key": {"type": "string", "description": "The scratchpad key (with or without 'ref:' prefix)"},
+                "start_line": {"type": "integer", "description": "Starting line number to replace (1-indexed, inclusive)"},
+                "end_line": {"type": "integer", "description": "Ending line number to replace (1-indexed, inclusive)"},
+                "new_content": {"type": "string", "description": "The new content to insert in place of the specified lines"},
+            },
+            "required": ["key", "start_line", "end_line", "new_content"],
+        }
+
+    def execute(self, key: str, start_line: int, end_line: int, new_content: str) -> str:
+        self._emit(f"✂️ Editing lines {start_line}-{end_line} in '{key}'...")
+        if not self.scratchpad:
+            return "❌ Error: Scratchpad not initialized."
+            
+        content = self.scratchpad.get(key)
+        if content is None:
+             return f"⚠️ Key '{key}' not found in scratchpad."
+
+        lines = content.split('\n')
+        total_lines = len(lines)
+        
+        if start_line < 1 or end_line < start_line:
+            return f"❌ Error: Invalid line range {start_line}-{end_line}. Lines are 1-indexed."
+            
+        if start_line > total_lines:
+            return f"❌ Error: start_line {start_line} is beyond the document length ({total_lines} lines)."
+            
+        # Convert to 0-indexed for Python list slicing
+        start_idx = start_line - 1
+        end_idx = min(end_line, total_lines)
+        
+        # Replace the slice
+        prefix = lines[:start_idx]
+        suffix = lines[end_idx:]
+        
+        new_lines = new_content.split('\n')
+        modified_lines = prefix + new_lines + suffix
+        modified_content = '\n'.join(modified_lines)
+        
+        # Keep original description
+        original_desc = "Edited entry"
+        items = self.scratchpad.list_all()
+        clean_key = key.replace("ref:", "")
+        for item in items:
+            if item["key"] == clean_key:
+                original_desc = item.get("description", "Edited entry")
+                break
+                
+        # Overwrite
+        ref = self.scratchpad.save(clean_key, modified_content, original_desc)
+        return f"✅ Successfully replaced lines {start_line}-{end_line}. New document size: {len(modified_lines)} lines."
+
+class ScratchpadAppendTool(BaseTool):
+    @property
+    def name(self) -> str:
+        return "scratchpad_append"
+
+    @property
+    def description(self) -> str:
+        return "Add new content to the very end of a scratchpad entry."
+
+    @property
+    def category(self) -> str:
+        return "SESSION_SCRATCHPAD"
+
+    @property
+    def parameters(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "key": {"type": "string", "description": "The scratchpad key (with or without 'ref:' prefix)"},
+                "new_content": {"type": "string", "description": "The content to append to the end of the document"},
+            },
+            "required": ["key", "new_content"],
+        }
+
+    def execute(self, key: str, new_content: str) -> str:
+        self._emit(f"➕ Appending to '{key}'...")
+        if not self.scratchpad:
+            return "❌ Error: Scratchpad not initialized."
+            
+        content = self.scratchpad.get(key)
+        if content is None:
+             return f"⚠️ Key '{key}' not found in scratchpad."
+             
+        modified_content = content
+        if not modified_content.endswith('\n') and not new_content.startswith('\n'):
+            modified_content += '\n'
+        modified_content += new_content
+        
+        # Keep original description
+        original_desc = "Appended entry"
+        items = self.scratchpad.list_all()
+        clean_key = key.replace("ref:", "")
+        for item in items:
+            if item["key"] == clean_key:
+                original_desc = item.get("description", "Appended entry")
+                break
+                
+        # Overwrite
+        ref = self.scratchpad.save(clean_key, modified_content, original_desc)
+        return f"✅ Successfully appended content. New document size: {len(modified_content.splitlines())} lines."

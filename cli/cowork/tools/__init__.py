@@ -14,6 +14,10 @@ from .builtin.scratchpad import (
     ScratchpadReadChunkTool, 
     ScratchpadSearchTool,
     ScratchpadUpdateGoalTool,
+    ScratchpadForkTool,
+    ScratchpadGetOutlineTool,
+    ScratchpadEditLinesTool,
+    ScratchpadAppendTool,
 )
 from .builtin.workspace import (
     WorkspaceWriteTool, 
@@ -65,6 +69,10 @@ def _register_builtin():
     registry.register(ScratchpadReadChunkTool)
     registry.register(ScratchpadSearchTool)
     registry.register(ScratchpadUpdateGoalTool)
+    registry.register(ScratchpadForkTool)
+    registry.register(ScratchpadGetOutlineTool)
+    registry.register(ScratchpadEditLinesTool)
+    registry.register(ScratchpadAppendTool)
     registry.register(WorkspaceWriteTool)
     registry.register(WorkspaceReadTool)
     registry.register(WorkspaceListTool)

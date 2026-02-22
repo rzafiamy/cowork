@@ -126,6 +126,20 @@ Then the agent:
 
 This gives the model a compact and explicit "what just happened" state, instead of forcing it to infer everything from raw tool payloads.
 
+### 5.5 Document Refinement & Editing (Virtual IDE)
+To allow the agent to refine complex drafts (e.g. presentation slides, long articles) without loading the entire document into the 6,000 token context window, the Scratchpad exposes a suite of "Virtual IDE" tools:
+
+*   **`scratchpad_fork`**: Duplicates an existing reference to a new key. Ensures the original draft is kept intact (non-destructive editing).
+*   **`scratchpad_get_outline`**: Returns a structured table of contents (detecting Markdown headers or JSON keys) with line numbers. The agent uses this to find the target section.
+*   **`scratchpad_edit_lines`**: Overwrites a specific start-to-end line range with new content, saving the result directly to the scratchpad.
+*   **`scratchpad_append`**: Adds new lines directly to the end of the document.
+
+**The Refinement Loop**:
+1. Research/Drafting -> Save base draft to `ref:base_draft`.
+2. `scratchpad_fork` -> `ref:base_draft` to `ref:draft_v2`.
+3. `scratchpad_get_outline` -> Discover where "Slide 4" is (e.g., Lines 50-65).
+4. `scratchpad_edit_lines` -> Replace lines 50-65 with the new updated content for Slide 4.
+
 ---
 
 ## 6. 🚨 Error & Failure Management
