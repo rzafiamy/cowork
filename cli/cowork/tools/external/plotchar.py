@@ -72,10 +72,25 @@ def plotchar(chart_type: str, data: str, x_key: str, y_key: str, output_path: st
         else:
             plt.title(f"{chart_type.capitalize()} Chart")
             
+        if chart_type != "pie":
+            plt.xticks(rotation=45, ha='right')
+            
         plt.tight_layout()
 
         if not output_path:
             output_path = f"chart_{uuid.uuid4().hex[:8]}.png"
+
+        # If not an absolute path, save it in the current workspace artifacts directory
+        if not os.path.isabs(output_path):
+            try:
+                from ...workspace import workspace_manager
+                sessions = workspace_manager.list_all()
+                if sessions:
+                    active_session = workspace_manager.load(sessions[0]["slug"])
+                    if active_session:
+                        output_path = str(active_session.artifacts_path / os.path.basename(output_path))
+            except Exception:
+                pass
 
         # Ensure output directory exists if provided
         output_dir = os.path.dirname(output_path)
@@ -94,7 +109,7 @@ def plotchar(chart_type: str, data: str, x_key: str, y_key: str, output_path: st
 
 TOOLS = [
     {
-        "category": "MEDIA_TOOLS",
+        "category": "DATA_AND_UTILITY",
         "type": "function",
         "function": {
             "name": "plotchar",

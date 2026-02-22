@@ -4,7 +4,7 @@ Implementations for OpenWeatherMap.
 """
 
 import urllib.parse
-from .utils import _env, _missing_key, _http_get, _TTL_WEATHER
+from .utils import _env, _missing_key, _http_get, _TTL_WEATHER, json_to_markdown
 
 def openweather_current(location: str, units: str = "metric") -> str:
     """Get current weather conditions using OpenWeatherMap API."""
@@ -34,7 +34,25 @@ def openweather_forecast(location: str, days: int = 5) -> str:
     try:
         data = _http_get(url, ttl=_TTL_WEATHER)
         if data.get("cod") not in (200, "200"): return f"Error: {data.get('message')}"
-        return f"📅 Forecast for {location} received."
+        
+        # We can directly transform the response into markdown
+        # To make it concise, let's extract only the list of forecasts and city details
+        simplified_data = {
+            "City": data.get("city", {}).get("name"),
+            "Forecasts": [
+                {
+                    "Time": item.get("dt_txt"),
+                    "Temp": f"{item.get('main', {}).get('temp')}°C",
+                    "Weather": item.get("weather", [{}])[0].get("description"),
+                    "Humidity": f"{item.get('main', {}).get('humidity')}%"
+                }
+                for item in data.get("list", [])
+            ]
+        }
+        
+        md_output = f"📅 **Weather Forecast for {location} (Next {days} days):**\n\n"
+        md_output += json_to_markdown(simplified_data)
+        return md_output
     except Exception as e:
         return f"Forecast failed: {e}"
 

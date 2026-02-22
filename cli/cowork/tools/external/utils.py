@@ -27,6 +27,34 @@ def _missing_key(tool_name: str, env_var: str) -> str:
         f"   Set it in your .env file and restart Cowork."
     )
 
+def json_to_markdown(data: Any, level: int = 2) -> str:
+    """Recursively transform JSON data into Markdown for LLMs."""
+    if data is None:
+        return "null"
+        
+    out = []
+    prefix = "#" * min(level, 6)
+    
+    if isinstance(data, dict):
+        for k, v in data.items():
+            if isinstance(v, (dict, list)):
+                out.append(f"\n{prefix} {str(k).title()}\n")
+                out.append(json_to_markdown(v, level + 1))
+            else:
+                out.append(f"- **{k}**: {v}")
+    elif isinstance(data, list):
+        for idx, item in enumerate(data):
+            if isinstance(item, (dict, list)):
+                # Optional visual separation for list items
+                out.append(f"\n{prefix} Item {idx + 1}")
+                out.append(json_to_markdown(item, level + 1))
+            else:
+                out.append(f"- {item}")
+    else:
+        return str(data)
+        
+    return "\n".join(out).strip()
+
 # ─── Disk-Based TTL Cache ─────────────────────────────────────────────────────
 
 _CACHE_DIR = Path.home() / ".cowork" / "api_cache"
