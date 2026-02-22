@@ -605,6 +605,91 @@ def render_memory_search_results(query: str, results: list[dict]) -> None:
     ))
 
 
+# ─── Issue Dashboard ──────────────────────────────────────────────────────────
+
+def render_issue_dashboard(count: int, issues: list[dict]) -> None:
+    """Render a view of the agent's Issue Manager."""
+    
+    if not issues:
+        console.print(Panel(
+            "[muted]No issues recorded yet. When tools fail and get fixed, they'll appear here.[/muted]",
+            title="[sentinel]🚨 Issue Manager Database[/sentinel]",
+            border_style="sentinel"
+        ))
+        return
+
+    table = Table(
+        box=box.ROUNDED,
+        border_style="sentinel",
+        header_style="sentinel",
+        show_lines=True,
+        expand=True
+    )
+    table.add_column("ID", style="muted", width=10)
+    table.add_column("Issue / Reason", style="warning")
+    table.add_column("Solution", style="success")
+    table.add_column("Recorded", style="dim_text", justify="right")
+
+    for t in issues[:30]: # Limit display
+        added = t.get("created_at", "")[:10]
+        issue_reason = f"[bold_white]{t['issue']}[/bold_white]\n[dim_text]{t['reason']}[/dim_text]"
+        table.add_row(
+            t["id"][:8],
+            issue_reason,
+            t["solution"],
+            added
+        )
+
+    console.print(Panel(
+        table,
+        title=f"[sentinel]🚨 Issue Manager Database ({count} total)[/sentinel]",
+        border_style="sentinel",
+    ))
+
+def render_issue_search_results(query: str, results: list[dict]) -> None:
+    """Render the results of an issue search."""
+    if not results:
+        console.print(Panel(
+            f"[muted]No issues found matching '[highlight]{query}[/highlight]'.[/muted]",
+            title="[sentinel]🔍 Issue Search[/sentinel]",
+            border_style="sentinel",
+        ))
+        return
+
+    table = Table(
+        box=box.ROUNDED,
+        border_style="sentinel",
+        header_style="sentinel",
+        show_lines=True,
+        expand=True
+    )
+    table.add_column("Rank", style="muted", width=6, justify="right")
+    table.add_column("Issue", style="warning")
+    table.add_column("Solution", style="success")
+    table.add_column("Score", justify="right")
+    table.add_column("ID", style="muted", width=10)
+
+    for i, t in enumerate(results[:15], 1):
+        score = t.get("similarity", 0.0)
+        score_color = "success" if score > 0.7 else "warning" if score > 0.4 else "muted"
+        
+        issue_text = f"[bold_white]{t['issue']}[/bold_white]\n[dim_text]{t['reason']}[/dim_text]"
+        
+        table.add_row(
+            str(i),
+            issue_text,
+            t["solution"],
+            f"[{score_color}]{score:.2f}[/{score_color}]",
+            t["id"][:8]
+        )
+
+    console.print(Panel(
+        table,
+        title=f"[sentinel]🔍 Issue Search: '{query}' ({len(results)} matches)[/sentinel]",
+        border_style="sentinel",
+    ))
+
+
 # ─── Token Usage Display ────────────────────────────────────────────────────────────
 
 def render_token_usage(entries: list[dict], totals: dict) -> None:
@@ -841,6 +926,10 @@ def render_help() -> None:
         ("/jobs",                           "Show Sentinel job dashboard"),
         ("/jobs clean",                     "Wipe all job history"),
         ("/jobs resume <id>",               "Resume a job by its ID prefix"),
+        ("/issues",                         "Manage the Issue Manager database"),
+        ("/issues list",                    "List recorded tool issues and solutions"),
+        ("/issues search <query>",          "Search recorded issues"),
+        ("/issues rm <id>",                 "Remove an issue by ID"),
         ("/config",                         "Show current configuration"),
         ("/config set <key> <value>",        "Update a configuration value"),
         ("/tokens",                         "Show token usage per model/endpoint"),
@@ -973,6 +1062,9 @@ SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/vector",                         "Alias for /memory (e.g. /vector search)"),
     ("/vector search ",                  "Explicit semantic search for facts"),
     ("/vector add ",                     "Manually insert a knowledge fact"),
+    ("/issues",                  "List recently recorded tool issues"),
+    ("/issues search ",          "Search past issues for hints  e.g. /issues search timeout"),
+    ("/issues rm ",              "Delete an issue  e.g. /issues rm 12345"),
     ("/ai",                      "List saved AI profiles"),
     ("/ai add ",                 "Add AI profile  e.g. /ai add gpt4 https://api.openai.com/v1 gpt-4o"),
     ("/ai switch ",              "Switch to a profile  e.g. /ai switch gpt4"),

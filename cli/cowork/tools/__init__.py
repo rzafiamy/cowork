@@ -57,6 +57,7 @@ from .builtin.multimodal import (
     SpeechToTextTool,
     TextToSpeechTool,
 )
+from .builtin.issue_tools import RecordIssueSolutionTool
 
 # Register builtin tools
 def _register_builtin():
@@ -99,6 +100,7 @@ def _register_builtin():
     registry.register(ImageGenerateTool)
     registry.register(SpeechToTextTool)
     registry.register(TextToSpeechTool)
+    registry.register(RecordIssueSolutionTool)
 
 def _register_external():
     from .external.adapter import ExternalToolAdapter

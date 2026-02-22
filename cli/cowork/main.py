@@ -851,6 +851,46 @@ async def handle_command(
         else:
             render_cron_list(mgr.list_all())
 
+    elif command in ("/issues",):
+        from .issues import IssueManager
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        user_id = _get_memory_user_id()
+        mgr = IssueManager(user_id, _config)
+        import cowork.ui as ui
+        
+        if not sub or sub == "list":
+            ui.render_issue_dashboard(mgr.get_triplet_count(), mgr.list_all())
+        elif sub == "search":
+            if len(parts) < 3:
+                render_error("Usage: /issues search <query>")
+            else:
+                query = parts[2].strip().strip('"').strip("'")
+                results = mgr.search_issues(query)
+                ui.render_issue_search_results(query, results)
+        elif sub == "rm":
+            if len(parts) < 3:
+                render_error("Usage: /issues rm <id>")
+            else:
+                tid = parts[2]
+                if mgr.delete_issue(tid):
+                    render_success(f"🗑️  Issue hint '{tid}' deleted.")
+                else:
+                    all_t = mgr.list_all()
+                    found = [t for t in all_t if t["id"].startswith(tid)]
+                    if len(found) == 1:
+                        mgr.delete_issue(found[0]["id"])
+                        render_success(f"🗑️  Issue hint '{found[0]['id'][:8]}' deleted.")
+                    elif len(found) > 1:
+                        render_error(f"Multiple matches for '{tid}'. Be more specific.")
+                    else:
+                        render_error(f"Issue hint '{tid}' not found.")
+        elif sub == "clear":
+            if click.confirm("Are you sure you want to clear ALL recorded issues?", default=False):
+                mgr.clear_all()
+                render_success("🧹 Issue database wiped clean.")
+        else:
+            ui.render_issue_dashboard(mgr.get_triplet_count(), mgr.list_all())
+
     elif command in ("/memory", "/vector"):
         sub = parts[1].lower() if len(parts) > 1 else ""
         if not sub or sub == "list" or sub == "view":
@@ -1587,6 +1627,66 @@ def jobs(action: Optional[str] = None) -> None:
     recent = _job_manager.list_recent(24)
     render_job_dashboard(recent)
 
+@cli.group(invoke_without_command=True)
+@click.pass_context
+def issues(ctx: click.Context) -> None:
+    """Manage recorded tool failures and solutions."""
+    if ctx.invoked_subcommand is not None:
+        return
+
+    print_banner()
+    if not _config.is_configured():
+        render_error("Not configured.")
+        return
+    
+    from .issues import IssueManager
+    user_id = _get_memory_user_id()
+    mgr = IssueManager(user_id, _config)
+    import cowork.ui as ui
+    ui.render_issue_dashboard(mgr.get_triplet_count(), mgr.list_all())
+
+@issues.command(name="list")
+def issues_list() -> None:
+    """List all recorded issues."""
+    from .issues import IssueManager
+    user_id = _get_memory_user_id()
+    mgr = IssueManager(user_id, _config)
+    import cowork.ui as ui
+    ui.render_issue_dashboard(mgr.get_triplet_count(), mgr.list_all())
+
+
+@issues.command(name="rm")
+@click.argument("id")
+def issues_rm(id: str) -> None:
+    """Delete a recorded issue by ID."""
+    from .issues import IssueManager
+    user_id = _get_memory_user_id()
+    mgr = IssueManager(user_id, _config)
+    
+    if mgr.delete_issue(id):
+        render_success(f"🗑️  Issue '{id}' deleted.")
+    else:
+        all_t = mgr.list_all()
+        found = [t for t in all_t if t["id"].startswith(id)]
+        if len(found) == 1:
+            mgr.delete_issue(found[0]["id"])
+            render_success(f"🗑️  Issue '{found[0]['id'][:8]}' deleted.")
+        elif len(found) > 1:
+            render_error(f"Multiple matches for '{id}'.")
+        else:
+            render_error(f"Issue '{id}' not found.")
+
+@issues.command(name="search")
+@click.argument("query")
+def issues_search(query: str) -> None:
+    """Search recorded issues."""
+    from .issues import IssueManager
+    user_id = _get_memory_user_id()
+    mgr = IssueManager(user_id, _config)
+    
+    results = mgr.search_issues(query)
+    import cowork.ui as ui
+    ui.render_issue_search_results(query, results)
 
 @cli.command()
 def setup() -> None:

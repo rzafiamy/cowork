@@ -34,6 +34,9 @@ dependencies = [
     # YouTube transcript (no API key required — always available)
     "youtube-transcript-api>=0.6",
     "PyYAML>=6.0",
+    "matplotlib>=3.7",
+    "seaborn>=0.12",
+    "pandas>=2.0",
 ]
 
 # Optional: local RAG stack (no external vector DB, no API for embeddings)

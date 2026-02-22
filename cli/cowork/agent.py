@@ -19,6 +19,7 @@ from .api_client import APIClient, APIError
 from .config import AgentJob, ConfigManager, FirewallManager, FirewallAction, JobManager, Scratchpad, Session
 from .prompts import AGENT_CHAT_SYSTEM_PROMPT, AGENT_SYSTEM_PROMPT, COMPRESS_PROMPT, SESSION_RE_TITLE_PROMPT
 from .memoria import Memoria
+from .issues import IssueManager
 from .router import MetaRouter
 from .theme import (
     GATEWAY_ERROR_PREFIX,
@@ -273,6 +274,7 @@ class GeneralPurposeAgent:
 
         self.router = MetaRouter(api_client, config.get("model_router", "gpt-4o-mini"))
         self.compressor = ContextCompressor(api_client, config, scratchpad)
+        self.issue_manager = IssueManager(user_id=memoria.user_id, config=config)
         self.gateway = ExecutionGateway(scratchpad)
         self.executor = ToolExecutor(scratchpad, config, status_callback=self.status_cb)
         self.firewall = FirewallManager()
@@ -467,6 +469,12 @@ class GeneralPurposeAgent:
         if "not found" in lowered and status == "ok":
             status = "partial"
             next_action = "Validate input/query and retry with adjusted parameters."
+
+        if status in ("error", "partial"):
+            matches = self.issue_manager.search_issues(f"{tool_name} {finding}")
+            if matches:
+                hints = [m["solution"] for m in matches]
+                next_action += f" [HINTS FROM PAST: {' | '.join(hints)}]"
 
         return {
             "tool": tool_name,

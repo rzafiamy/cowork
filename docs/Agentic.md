@@ -35,6 +35,7 @@ Welcome to the **Architectural Nerve Center** for the Makix Enterprise Agentic S
 > *Persistence, safety, and operational boundaries.*
 - 🛡️ **The Sentinel**: Persistent Job Queue and restoration logic.
 - 🚧 **Execution Gateways**: Schema validation and safety clamps.
+- 🚨 **Issue Manager**: Knowledge base for mitigating repetitive tool/logic errors.
 - 📊 **Operational Mapping**: System-wide limits and settings matrix.
 
 ### 5️⃣ [Data & Relational Architecture](./new_docs/11_Concept_Relationships.md)

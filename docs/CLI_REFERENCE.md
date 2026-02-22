@@ -118,6 +118,24 @@ cowork jobs clean
 
 Show Memoria status summary.
 
+### `cowork issues`
+
+Manage the Issue Manager database (failed tool/agent execution knowledge base).
+
+Actions:
+
+- `list` (default): list recorded issues and solutions
+- `search <query>`: search past issues via semantic/keyword matching
+- `rm <id>`: remove an issue by ID
+
+Examples:
+
+```bash
+cowork issues
+cowork issues search "cannot connect to docker"
+cowork issues rm abc12345
+```
+
 ## 4. Configuration and Connectivity
 
 ### `cowork setup`
@@ -288,6 +306,7 @@ These are chat-time commands, not shell subcommands:
 - `/cron`, `/cron list`, `/cron view <id>`, `/cron rm <id>`
 - `/memory`, `/memory list`, `/memory search <q>`, `/memory add <sub> <pred> <obj>`, `/memory summarize`, `/memory rm <id>`, `/memory clear`, `/memory compress`
 - `/vector` (alias for `/memory`)
+- `/issues`, `/issues search <q>`, `/issues rm <id>`, `/issues clear`
 - `/tools`
 - `/ai`, `/ai add ...`, `/ai switch <name>`, `/ai remove <name>`, `/ai save [name]`
 - `/model <name>`

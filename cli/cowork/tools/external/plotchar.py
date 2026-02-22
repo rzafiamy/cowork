@@ -1,0 +1,116 @@
+"""
+📈 Plotchart Tools
+Implementations for generating charts using matplotlib and seaborn.
+"""
+
+import json
+import uuid
+import os
+import io
+from .utils import _env
+
+try:
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+except ImportError:
+    pd, plt, sns = None, None, None
+
+def plotchar(chart_type: str, data: str, x_key: str, y_key: str, output_path: str = "", title: str = "") -> str:
+    """Generate a chart from data and save it as an image."""
+    if not all([pd, plt, sns]):
+        return "Error: Required libraries (pandas, matplotlib, seaborn) are not installed. Run `pip install pandas matplotlib seaborn`."
+
+    try:
+        # Prevent interactive plots from blocking
+        plt.switch_backend('Agg')
+        
+        # Parse data
+        if isinstance(data, str):
+            try:
+                parsed_data = json.loads(data)
+            except json.JSONDecodeError:
+                return "Error: data must be a valid JSON list of dictionaries."
+        else:
+            parsed_data = data
+
+        if not isinstance(parsed_data, list) or not all(isinstance(item, dict) for item in parsed_data):
+            return "Error: data must be a list of dictionaries."
+
+        df = pd.DataFrame(parsed_data)
+
+        if x_key not in df.columns:
+            return f"Error: x_key '{x_key}' not found in data."
+        
+        # y_key isn't strictly necessary for pie charts if we just use value counts, but we'll assume it is for now
+        if chart_type != "pie" and y_key not in df.columns:
+            return f"Error: y_key '{y_key}' not found in data."
+
+        # Setup plot style
+        sns.set_theme(style="whitegrid")
+        plt.figure(figsize=(10, 6))
+
+        if chart_type == "bar":
+            sns.barplot(data=df, x=x_key, y=y_key)
+        elif chart_type == "line":
+            sns.lineplot(data=df, x=x_key, y=y_key, marker="o")
+        elif chart_type == "scatter":
+            sns.scatterplot(data=df, x=x_key, y=y_key)
+        elif chart_type == "box":
+            sns.boxplot(data=df, x=x_key, y=y_key)
+        elif chart_type == "pie":
+            if y_key in df.columns:
+                plt.pie(df[y_key], labels=df[x_key], autopct='%1.1f%%', startangle=140)
+            else:
+                counts = df[x_key].value_counts()
+                plt.pie(counts, labels=counts.index, autopct='%1.1f%%', startangle=140)
+        else:
+             return f"Error: Unsupported chart_type '{chart_type}'. Supported types: bar, line, scatter, box, pie."
+
+        if title:
+            plt.title(title)
+        else:
+            plt.title(f"{chart_type.capitalize()} Chart")
+            
+        plt.tight_layout()
+
+        if not output_path:
+            output_path = f"chart_{uuid.uuid4().hex[:8]}.png"
+
+        # Ensure output directory exists if provided
+        output_dir = os.path.dirname(output_path)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+
+        abs_path = os.path.abspath(output_path)
+        return f"✅ Chart generated successfully. Saved to: {abs_path}"
+
+    except Exception as e:
+        if plt: plt.close()
+        return f"Chart generation failed: {e}"
+
+TOOLS = [
+    {
+        "category": "MEDIA_TOOLS",
+        "type": "function",
+        "function": {
+            "name": "plotchar",
+            "description": "Generate a chart (bar, line, scatter, pie, box) from JSON data and save it as an image.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chart_type": {"type": "string", "description": "Type of chart to generate: bar, line, scatter, box, pie"},
+                    "data": {"type": "string", "description": "JSON string containing a list of dictionaries. Example: '[{\"name\": \"A\", \"value\": 10}, {\"name\": \"B\", \"value\": 20}]'"},
+                    "x_key": {"type": "string", "description": "The key in the dictionary to use for the X-axis (or labels for pie)."},
+                    "y_key": {"type": "string", "description": "The key in the dictionary to use for the Y-axis (or values for pie)."},
+                    "title": {"type": "string", "description": "Optional title for the chart."},
+                    "output_path": {"type": "string", "description": "Optional file path to save the chart (e.g., 'my_chart.png'). Defaults to a generated filename."}
+                },
+                "required": ["chart_type", "data", "x_key", "y_key"],
+            },
+        },
+    }
+]
