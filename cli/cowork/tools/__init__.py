@@ -33,6 +33,7 @@ from .builtin.coding import (
     CodebaseSearchTextTool,
     CodebaseWriteFileTool,
     CodebaseGrepTool,
+    CodebaseBashTool,
 )
 from .builtin.cron import (
     CronScheduleTool, 
@@ -58,6 +59,7 @@ from .builtin.multimodal import (
     TextToSpeechTool,
 )
 from .builtin.issue_tools import RecordIssueSolutionTool
+from .builtin.media import YoutubeDownloadTool, MediaConvertTool
 
 # Register builtin tools
 def _register_builtin():
@@ -85,6 +87,7 @@ def _register_builtin():
     registry.register(CodebaseSearchTextTool)
     registry.register(CodebaseWriteFileTool)
     registry.register(CodebaseGrepTool)
+    registry.register(CodebaseBashTool)
     registry.register(CronScheduleTool)
     registry.register(CronListTool)
     registry.register(CronDeleteTool)
@@ -101,6 +104,8 @@ def _register_builtin():
     registry.register(SpeechToTextTool)
     registry.register(TextToSpeechTool)
     registry.register(RecordIssueSolutionTool)
+    registry.register(YoutubeDownloadTool)
+    registry.register(MediaConvertTool)
 
 def _register_external():
     from .external.adapter import ExternalToolAdapter

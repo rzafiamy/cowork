@@ -420,3 +420,68 @@ class CodebaseGrepTool(BaseTool):
             return "❌ grep timed out."
         except Exception as e:
             return f"❌ grep failed: {e}"
+class CodebaseBashTool(BaseTool):
+    @property
+    def name(self) -> str:
+        return "codebase_bash"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Run local shell commands (ls, cat, grep, find, wc, diff, head, tail) "
+            "to perform File & Codebase Intelligence. Useful for reading codebases, "
+            "finding files matching patterns (e.g., all .env files, all TODOs), "
+            "detecting duplication, auditing changes, and answering 'where is X defined?'"
+        )
+
+    @property
+    def category(self) -> str:
+        return "CODING_TOOLS"
+
+    @property
+    def parameters(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "The shell command to execute (e.g., 'find . -name \"*.env\"' or 'wc -l file.txt')."},
+                "directory": {"type": "string", "description": "Relative directory under project root to run the command in.", "default": "."},
+            },
+            "required": ["command"],
+        }
+
+    def execute(self, command: str, directory: str = ".") -> str:
+        try:
+            root = _project_root(self.scratchpad)
+            start = _resolve_in_project(directory, self.scratchpad)
+            if not start.exists() or not start.is_dir():
+                return f"❌ Directory not found: {directory}"
+
+            self._emit(f"💻 Running bash command '{command.split()[0]}' in '{start.relative_to(root)}'...")
+
+            proc = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                cwd=str(start),
+                timeout=60,
+            )
+            stdout = (proc.stdout or "").strip()
+            stderr = (proc.stderr or "").strip()
+
+            if proc.returncode != 0:
+                return f"❌ Command failed with code {proc.returncode}:\n{stderr or stdout}"
+
+            if not stdout:
+                return "✅ Command executed successfully (no output)."
+                
+            # Truncate output to prevent spamming the LLM context too heavily
+            if len(stdout) > 20000:
+                stdout = stdout[:20000] + "\n... [Output truncated due to length]"
+                
+            return f"📤 Output:\n{stdout}"
+
+        except subprocess.TimeoutExpired:
+            return "❌ Command timed out after 60 seconds."
+        except Exception as e:
+            return f"❌ Execution failed: {e}"
