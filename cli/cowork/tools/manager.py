@@ -10,6 +10,7 @@ from ..config import Scratchpad
 from ..theme import GATEWAY_ERROR_PREFIX, TOOL_ERROR_PREFIX, OP_DEFAULTS
 from .external.implementations import (
     get_available_external_tools,
+    EXTERNAL_TOOLS,
 )
 from .registry import registry
 
@@ -53,13 +54,14 @@ def get_available_tools_for_categories(categories: List[str]) -> List[Dict[str, 
     Like get_tools_for_categories but for external categories only returns
     tools whose API keys are actually configured.
     """
+    external_names = {t["function"]["name"] for t in EXTERNAL_TOOLS}
     available_external_names = {t["function"]["name"] for t in get_available_external_tools()}
     all_for_cats = get_tools_for_categories(categories)
     result = []
     for tool in all_for_cats:
         name = tool["function"]["name"]
         cat = tool["category"]
-        if cat in EXTERNAL_CATEGORIES and name not in available_external_names:
+        if cat in EXTERNAL_CATEGORIES and name in external_names and name not in available_external_names:
             continue
         result.append(tool)
     return result
@@ -67,12 +69,13 @@ def get_available_tools_for_categories(categories: List[str]) -> List[Dict[str, 
 
 def get_all_available_tools() -> List[Dict[str, Any]]:
     """Return all tools that are currently active (built-in + configured external)."""
+    external_names = {t["function"]["name"] for t in EXTERNAL_TOOLS}
     available_external_names = {t["function"]["name"] for t in get_available_external_tools()}
     result = []
     for tool in ALL_TOOLS:
         name = tool["function"]["name"]
         cat = tool["category"]
-        if cat in EXTERNAL_CATEGORIES:
+        if cat in EXTERNAL_CATEGORIES and name in external_names:
             if name in available_external_names:
                 result.append(tool)
         else:

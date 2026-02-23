@@ -35,7 +35,7 @@ class YoutubeDownloadTool(BaseTool):
 
     @property
     def category(self) -> str:
-        return "MULTIMODAL_TOOLS"
+        return "YOUTUBE_TOOLS"
 
     @property
     def parameters(self) -> Dict[str, Any]:
@@ -91,7 +91,7 @@ class MediaConvertTool(BaseTool):
 
     @property
     def category(self) -> str:
-        return "MULTIMODAL_TOOLS"
+        return "MEDIA_TOOLS"
 
     @property
     def parameters(self) -> Dict[str, Any]:
