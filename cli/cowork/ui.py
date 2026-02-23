@@ -261,14 +261,16 @@ def render_response(content: str, elapsed: float, tool_calls: int = 0, step_coun
         expand=True,
     ))
     console.print()
-
+    
+    # Push the LLM response text into the Autocompleter session words
+    _get_super_completer().add_session_text(content)
 
 def render_user_message(content: str) -> None:
     """Render the user's message."""
     console.print(Panel(
-        Text(content, style="text"),
-        title="[highlight]👤 You[/highlight]",
-        border_style="highlight",
+        Text(content, style="bold_white"),
+        title="[primary]👤 You[/primary]",
+        border_style="primary",
         padding=(0, 2),
     ))
 
@@ -1101,58 +1103,18 @@ HASHTAG_PILLS: list[tuple[str, str]] = [
 
 # ─── Cowork Completer ─────────────────────────────────────────────────────────
 
-class CoworkCompleter(Completer):
-    """
-    Smart completer for the Cowork REPL:
-    - Typing '/' shows all slash commands with descriptions
-    - Typing '/lo' filters to matching commands
-    - Typing '#' shows action pill suggestions
-    - Partial word matching anywhere in the command
-    """
+from .autocompleter import SuperCompleter, HistoryDB
+import os
 
-    @staticmethod
-    def _esc(s: str) -> str:
-        """Escape XML special chars for prompt_toolkit HTML()."""
-        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+_super_completer: Optional[SuperCompleter] = None
+_history_db: Optional[HistoryDB] = None
 
-    def get_completions(self, document: Document, complete_event: Any):
-        text = document.text_before_cursor
-
-        # ── Slash command completion ──────────────────────────────────────────
-        if text.startswith("/"):
-            typed = text.lower()
-            for cmd, desc in SLASH_COMMANDS:
-                if typed in cmd.lower():
-                    display = HTML(
-                        f"<b>{self._esc(cmd.rstrip())}</b>  "
-                        f"<ansibrightblack>{self._esc(desc)}</ansibrightblack>"
-                    )
-                    yield Completion(
-                        text=cmd,
-                        start_position=-len(text),
-                        display=display,
-                    )
-            return
-
-        # ── Hashtag pill completion ───────────────────────────────────────────
-        words = text.split()
-        if words:
-            last_word = words[-1]
-            if last_word.startswith("#"):
-                typed_tag = last_word.lower()
-                for tag, desc in HASHTAG_PILLS:
-                    if tag.lower().startswith(typed_tag):
-                        completion_text = tag[len(last_word):]
-                        display = HTML(
-                            f"<ansiyellow><b>{self._esc(tag)}</b></ansiyellow>  "
-                            f"<ansibrightblack>{self._esc(desc)}</ansibrightblack>"
-                        )
-                        yield Completion(
-                            text=completion_text,
-                            start_position=0,
-                            display=display,
-                        )
-
+def _get_super_completer() -> SuperCompleter:
+    global _super_completer, _history_db
+    if _super_completer is None:
+        _super_completer = SuperCompleter(SLASH_COMMANDS, HASHTAG_PILLS)
+        _history_db = _super_completer.db
+    return _super_completer
 
 # ─── prompt_toolkit Style ─────────────────────────────────────────────────────
 
@@ -1184,15 +1146,77 @@ def _get_prompt_session() -> PromptSession:
     """Return (or lazily create) the shared PromptSession with persistent history."""
     global _prompt_session
     if _prompt_session is None:
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.filters import has_completions, has_selection
+        import re
+
+        kb = KeyBindings()
+
+        @kb.add('tab')
+        def _(event):
+            """Pressing Tab accepts the current completion."""
+            b = event.app.current_buffer
+            if b.complete_state:
+                b.complete_state.current_completion
+                b.apply_completion(b.complete_state.current_completion)
+            else:
+                # If no completions are visible, try to trigger them
+                b.start_completion(select_first=True)
+
+        @kb.add('right')
+        def _(event):
+            """Pressing Right arrow accepts one word of auto-suggestion or completion."""
+            b = event.app.current_buffer
+            
+            # 1. Check if there's a completion menu open
+            if b.complete_state and b.complete_state.current_completion:
+                comp = b.complete_state.current_completion.text
+                typed = b.text[b.complete_state.original_document.cursor_position:]
+                remaining = comp[len(typed):]
+                if remaining:
+                    # extract next word
+                    match = re.search(r'^\W*\w+', remaining)
+                    chunk = match.group(0) if match else remaining
+                    b.insert_text(chunk)
+                return
+
+            # 2. Check auto-suggest
+            suggestion = b.suggestion
+            if suggestion and suggestion.text:
+                # Get the next "word" from the suggestion
+                match = re.search(r'^\W*\w+', suggestion.text)
+                chunk = match.group(0) if match else suggestion.text
+                b.insert_text(chunk)
+            else:
+                # Default right arrow behavior (move cursor right)
+                b.cursor_right()
+
+        @kb.add('left')
+        def _(event):
+            """Pressing Left arrow goes back one word if cursor is at the end, else normal left."""
+            b = event.app.current_buffer
+            if b.cursor_position == len(b.text):
+                # We are at the end, delete last word
+                match = re.search(r'\w+\W*$', b.text)
+                if match:
+                    chunk = match.group(0)
+                    b.delete_before_cursor(len(chunk))
+                else:
+                    b.cursor_left()
+            else:
+                b.cursor_left()
+
+
         _prompt_session = PromptSession(
             history=FileHistory(str(_HISTORY_FILE)),
-            completer=CoworkCompleter(),
+            completer=_get_super_completer(),
             auto_suggest=AutoSuggestFromHistory(),
             style=PT_STYLE,
             complete_while_typing=True,
             enable_history_search=True,   # Ctrl+R incremental search
             mouse_support=False,
             wrap_lines=True,
+            key_bindings=kb,
         )
     return _prompt_session
 
@@ -1223,7 +1247,15 @@ async def get_user_input(session_title: str = "New Session") -> str:
             prompt_tokens,
             style=PT_STYLE,
         )
-        return user_input.strip()
+        user_text = user_input.strip()
+        # Extract typed text for compound word completion
+        if user_text:
+            _get_super_completer().add_session_text(user_text)
+        
+        # Save to FTS history DB
+        if _history_db and user_text and getattr(user_text, 'startswith', None) and not user_text.startswith("/"):
+            _history_db.add_interaction(user_text, os.getcwd())
+        return user_text
     except (KeyboardInterrupt, EOFError):
         return "/exit"
     except Exception:

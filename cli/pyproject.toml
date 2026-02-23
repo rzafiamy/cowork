@@ -37,6 +37,7 @@ dependencies = [
     "matplotlib>=3.7",
     "seaborn>=0.12",
     "pandas>=2.0",
+    "rapidfuzz>=3.0",
 ]
 
 # Optional: local RAG stack (no external vector DB, no API for embeddings)
