@@ -49,3 +49,6 @@ scratchpad/
 memoria/
 *.log
 workspace/
+
+# Test Outputs
+*.xlsx

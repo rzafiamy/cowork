@@ -44,6 +44,12 @@ Welcome to the **Architectural Nerve Center** for the Makix Enterprise Agentic S
 - 🔄 **Cascading Logic**: Deletion and renaming propagation rules.
 - 📁 **Path Mapping**: Logical-to-physical storage translation.
 
+### 6️⃣ [Testing Strategy](../tests/TEST_ARCHITECTURE.md)
+> *Continuous evaluation and validation framework.*
+- 🧪 **Test Runner**: Headless evaluation mechanism.
+- 🚦 **Safety Boundaries**: Validating constraints and hallucination checks.
+- 📊 **Telemetry**: Test exports via Excel formatting.
+
 ---
 
 ## 🛠️ Developer Quick-Check
