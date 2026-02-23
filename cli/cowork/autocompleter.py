@@ -141,6 +141,23 @@ class SuperCompleter(Completer):
         # In-memory dictionary of bigrams (previous_word -> list of next_words)
         self.session_bigrams = {}
 
+        # Load global dictionary for spelling correction/completion
+        self.global_dictionary = set()
+        self._load_dictionary()
+
+    def _load_dictionary(self):
+        """Load the OS word dictionary for android-like autocorrect."""
+        dict_path = Path("/usr/share/dict/words")
+        if dict_path.exists():
+            try:
+                with open(dict_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        w = line.strip().lower()
+                        if len(w) >= 4 and w.isalpha():
+                            self.global_dictionary.add(w)
+            except Exception:
+                pass
+
     @staticmethod
     def _esc(s: str) -> str:
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -189,6 +206,15 @@ class SuperCompleter(Completer):
             results = simple_fuzz_match(query, self._history_cache, limit=limit)
             return [res[0] for res in results]
 
+    def _dict_correction(self, word: str, limit=3) -> list[str]:
+        """Find closest actual words from the global dictionary using fuzzy matching."""
+        if not HAS_RAPIDFUZZ or not self.global_dictionary or len(word) < 3:
+            return []
+        # Score higher for prefix matches + similarity ratio
+        results = process.extract(word.lower(), self.global_dictionary, scorer=fuzz.WRatio, limit=limit)
+        # return items that have a score > 75
+        return [res[0] for res in results if res[1] > 75]
+
     def get_completions(self, document: Document, complete_event: Any):
         text = document.text_before_cursor
         if not text:
@@ -201,7 +227,9 @@ class SuperCompleter(Completer):
                 if typed in cmd.lower():
                     display = HTML(f"<b>{self._esc(cmd)}</b>  <ansibrightblack>{self._esc(desc)}</ansibrightblack>")
                     yield Completion(cmd, start_position=-len(text), display=display, style='bg:ansigray fg:ansiwhite')
-            return
+            # If the user is just typing the slash command (no arguments yet), don't show other completions
+            if " " not in text.strip():
+                return
 
         # 2. Hashtag Pill Completion
         words = text.split()
@@ -252,21 +280,33 @@ class SuperCompleter(Completer):
                         match,
                         start_position=-len(text),
                         display=HTML(f"<ansicyan>⚡ {self._esc(match)}</ansicyan>"),
-                        display_meta="Fuzzy"
+                        display_meta="Fuzzy Session"
                     )
                     
-            # 3c. Word completion from Session Text (LLM Outputs / User inputs)
-            if len(last_word) >= 2:
+            # 3c. Word completion from Session Text (LLM Outputs / User inputs) priority
+            if len(last_word) >= 1:
                 word_matches = [w for w in self.session_words if w.lower().startswith(last_word.lower()) and w != last_word]
-                # Sort by length or just take top 5
                 for w in word_matches[:5]:
-                    if w not in seen_completions:
+                    if w.lower() not in [s.lower() for s in seen_completions]:
                         seen_completions.add(w)
                         yield Completion(
                             w,
                             start_position=-len(last_word),
                             display=HTML(f"<ansimagenta>🔹 {self._esc(w)}</ansimagenta>"),
                             display_meta="Session Word"
+                        )
+            
+            # 3d. Android Keyboard-style Global Dictionary Typo Correction (Lowest Priority)
+            if len(last_word) >= 3:
+                dict_matches = self._dict_correction(last_word, limit=3)
+                for w in dict_matches:
+                    if w.lower() not in [s.lower() for s in seen_completions] and w.lower() != last_word.lower():
+                        seen_completions.add(w)
+                        yield Completion(
+                            w,
+                            start_position=-len(last_word),
+                            display=HTML(f"<ansibrightblack>📖 {self._esc(w)}</ansibrightblack>"),
+                            display_meta="Dictionary"
                         )
                         
         # 4. Next-Word Prediction (Bigrams)
