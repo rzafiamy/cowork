@@ -12,6 +12,7 @@ def google_cse_search(
     language: str = "en",
     date_restrict: str = "",
     site_search: str = "",
+    search_type: str = "",
 ) -> str:
     """Search Google using the official Custom Search JSON API."""
     api_key = _env("GOOGLE_API_KEY")
@@ -30,6 +31,7 @@ def google_cse_search(
     }
     if date_restrict: params["dateRestrict"] = date_restrict
     if site_search: params["siteSearch"] = site_search
+    if search_type == "image": params["searchType"] = "image"
 
     url = f"https://www.googleapis.com/customsearch/v1?{urllib.parse.urlencode(params)}"
 
@@ -47,7 +49,11 @@ def google_cse_search(
                 title = item.get("title", "Untitled")
                 link = item.get("link", "")
                 snippet = item.get("snippet", "").replace("\n", " ")
-                lines.append(f"{i}. **{title}**\n   URL: {link}\n   {snippet}\n")
+                if search_type == "image" and "image" in item:
+                    context_link = item.get("image", {}).get("contextLink", "")
+                    lines.append(f"{i}. **{title}**\n   Image URL: {link}\n   Source: {context_link}\n")
+                else:
+                    lines.append(f"{i}. **{title}**\n   URL: {link}\n   {snippet}\n")
         return "\n".join(lines)
     except Exception as e:
         return f"Google CSE search failed: {e}"
@@ -57,10 +63,11 @@ def google_search(
     num_results: int = 5,
     location: str = "",
     time_range: str = "",
+    search_type: str = "",
 ) -> str:
     """Search Google. Uses CSE if available, else SerpAPI."""
     if _env("GOOGLE_API_KEY") and _env("GOOGLE_SEARCH_ENGINE_ID"):
-        return google_cse_search(query=query, num_results=num_results)
+        return google_cse_search(query=query, num_results=num_results, search_type=search_type)
 
     api_key = _env("SERPAPI_KEY")
     if not api_key:
@@ -74,6 +81,7 @@ def google_search(
     }
     if location: params["location"] = location
     if time_range: params["tbs"] = time_range
+    if search_type == "image": params["tbm"] = "isch"
 
     url = f"https://serpapi.com/search?{urllib.parse.urlencode(params)}"
 
@@ -128,6 +136,7 @@ TOOLS = [
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
                     "num_results": {"type": "integer", "description": "Number of results (1-10)"},
+                    "search_type": {"type": "string", "description": "Type of search, e.g., 'image'"},
                 },
                 "required": ["query"],
             },
@@ -144,6 +153,7 @@ TOOLS = [
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
                     "num_results": {"type": "integer", "description": "Number of results"},
+                    "search_type": {"type": "string", "description": "Type of search, e.g., 'image'"},
                 },
                 "required": ["query"],
             },

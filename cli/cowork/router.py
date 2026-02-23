@@ -328,11 +328,11 @@ class MetaRouter:
             categories.append("YOUTUBE_TOOLS")
         
         # Search & Info
-        if any(w in p for w in ["google search", "serpapi", "brave search", "search google", "chercher", "trouver", "recherche"]):
+        if any(w in p for w in ["google search", "serpapi", "brave search", "search google", "chercher", "trouver", "recherche", "image search", "find image", "search image"]):
             categories.append("SEARCH_TOOLS")
         
         # Web & Scraping
-        if any(w in p for w in ["firecrawl", "scrape", "crawl", "website content", "extract", "website", "site web", "extraire", "lien", "download file", "download pdf", "fetch file"]):
+        if any(w in p for w in ["firecrawl", "scrape", "crawl", "website content", "extract", "website", "site web", "extraire", "lien", "download file", "download pdf", "fetch file", "download image"]):
             categories.append("WEB_TOOLS")
         
         # News
@@ -354,9 +354,9 @@ class MetaRouter:
         
         # Multi-modal
         if any(w in p for w in [
-            "generate image", "create image", "dall-e", "stable diffusion", "make a picture", "draw",
+            "generate image", "create image", "dall-e", "stable diffusion", "draw",
             "transcribe", "stt", "tts", "vision", "describe image", "analyze image", "ocr",
-            "générer image", "créer image", "dessiner", "décrire image", "analyser image",
+            "générer image", "créer image", "dessiner",
         ]):
             categories.append("MULTIMODAL_TOOLS")
 

@@ -27,6 +27,7 @@ not raw data. Prefer parallel tool execution over sequential when tasks are inde
 - Be deterministic when routing or compressing; be creative when generating
 - Fail loudly with an actionable hint, then self-correct or ask the user
 - Prefer doing over explaining unless the user asks for an explanation
+- When a user asks to search or find items (like videos, articles, links), provide the list of results directly. Do not over-summarize into a single item unless requested.
 - **Finish strong**: Once the user's objective is met, provide the final answer and STOP calling tools. Do not loop if you have all the information needed.
 
 ## ⏱️ Step Budget Awareness (CRITICAL)
@@ -149,10 +150,10 @@ USER_PREFERENCES: {user_preferences}\
 # available tools (prevents routing to tools without API keys).
 
 ROUTER_CATEGORY_DESCRIPTIONS = {
-    "SEARCH_TOOLS": "Web research, fact-finding (Google/Brave Search)",
+    "SEARCH_TOOLS": "Web research, fact-finding, and image search (Google/Brave Search). Use to find content or existing images online.",
     "KNOWLEDGE_TOOLS": "Deep topic research (Wikipedia)",
     "YOUTUBE_TOOLS": "YouTube video search, transcripts, metadata",
-    "WEB_TOOLS": "Scrape, crawl, or download a specific file from URL (Firecrawl/WebDownloader)",
+    "WEB_TOOLS": "Scrape, crawl, or download a specific file/image from a URL (Firecrawl/WebDownloader)",
     "WEATHER_TOOLS": "Current weather and forecasts (OpenWeatherMap)",
     "NEWS_TOOLS": "News headlines and article search (NewsAPI)",
     "CODING_TOOLS": "Coding purpose tool (list/read/search/grep/write/github) for web/python/dev tasks",
@@ -162,7 +163,7 @@ ROUTER_CATEGORY_DESCRIPTIONS = {
     "GOOGLE_TOOLS": "Google Calendar, Drive, Gmail",
     "SOCIAL_TOOLS": "LinkedIn profile/post search",
     "VISION": "Image analysis, OCR",
-    "MULTIMODAL_TOOLS": "Vision/image analysis, image generation (DALL-E style), speech-to-text (ASR/Whisper), text-to-speech (TTS)",
+    "MULTIMODAL_TOOLS": "Vision/image analysis, AI image generation (only for creating brand new images, NOT finding them), speech-to-text (ASR/Whisper), text-to-speech (TTS)",
     "DATA_AND_UTILITY": "Math, charts, diagrams, time/date",
     "DOCUMENT_TOOLS": "Create PDF, PowerPoint (PPTX), Excel (XLSX), or Word (DOCX) documents",
     "SESSION_SCRATCHPAD": "Store or retrieve large data within this session",
@@ -194,7 +195,8 @@ Guidance (not hard rules — use your judgment):
 - Use CONVERSATIONAL_ONLY for short conceptual Q&A where tool calls are very unlikely
 - Use ALL_TOOLS only if confidence is not enough to select categories
 - For time-sensitive topics, prioritize available research tools over general ones
-- Avoid selecting categories that are not in the 'Available categories' list above\
+- Avoid selecting categories that are not in the 'Available categories' list above
+- EXTREMELY IMPORTANT: If the user wants to FIND, SEARCH FOR, or DOWNLOAD an existing image, do NOT use MULTIMODAL_TOOLS or VISION. Use SEARCH_TOOLS. ONLY use MULTIMODAL_TOOLS if the user explicitly asks to CREATE or GENERATE a brand-new AI image.\
 """
 
 ROUTER_USER_TEMPLATE = "Classify this request: {prompt}"

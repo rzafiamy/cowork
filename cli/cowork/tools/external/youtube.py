@@ -173,7 +173,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "youtube_search",
-            "description": "Search YouTube for videos matching a query.",
+            "description": "Search YouTube for videos matching a query. Returns a list of video URLs and descriptions. IMPORTANT: You MUST always provide the RAW video URLs in your final response to the user. Do NOT use markdown link syntax like [text](url), just print the raw URL so it is clickable in the CLI.",
             "parameters": {
                 "type": "object",
                 "properties": {
