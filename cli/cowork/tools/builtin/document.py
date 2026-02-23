@@ -77,8 +77,8 @@ class DocumentCreatePdfTool(BaseTool):
                     "description": (
                         "JSON array of sections. Each section: "
                         "{\"heading\": str (optional), \"text\": str (optional), "
-                        "\"bullets\": [str] (optional)}. "
-                        "Example: [{\"heading\": \"Intro\", \"text\": \"Hello world.\", \"bullets\": [\"Point A\", \"Point B\"]}]"
+                        "\"bullets\": [str] (optional), \"image\": str (absolute path, optional)}. "
+                        "Example: [{\"heading\": \"Intro\", \"text\": \"Hello world.\", \"bullets\": [\"Point A\", \"Point B\"], \"image\": \"/path/to/img.png\"}]"
                     ),
                 },
                 "author": {
@@ -183,6 +183,21 @@ class DocumentCreatePdfTool(BaseTool):
                     for b in bullets
                 ]
                 story.append(ListFlowable(items, bulletType="bullet", start="•", leftIndent=18))
+            
+            image_path = sec.get("image")
+            if image_path and Path(image_path).exists():
+                from reportlab.platypus import Image
+                try:
+                    img = Image(image_path)
+                    max_width = 150 * mm
+                    if img.drawWidth > max_width:
+                        ratio = max_width / img.drawWidth
+                        img.drawWidth = max_width
+                        img.drawHeight = img.drawHeight * ratio
+                    story.append(img)
+                except Exception as e:
+                    story.append(Paragraph(f"[Image Error: {e}]", body_style))
+
             story.append(Spacer(1, 3 * mm))
 
         doc.build(story)
@@ -241,8 +256,8 @@ class DocumentCreatePptxTool(BaseTool):
                     "type": "string",
                     "description": (
                         "JSON array of slides. Each slide: "
-                        "{\"title\": str, \"content\": str (optional), \"bullets\": [str] (optional)}. "
-                        "Example: [{\"title\": \"Introduction\", \"bullets\": [\"Key point 1\", \"Key point 2\"]}]"
+                        "{\"title\": str, \"content\": str (optional), \"bullets\": [str] (optional), \"image\": str (absolute path, optional)}. "
+                        "Example: [{\"title\": \"Introduction\", \"bullets\": [\"Key point 1\"], \"image\": \"/path/to/chart.png\"}]"
                     ),
                 },
                 "theme_color": {
@@ -365,6 +380,13 @@ class DocumentCreatePptxTool(BaseTool):
                     for run in p.runs:
                         run.font.size = _Pt(18)
                         run.font.color.rgb = dark_text
+
+            image_path = slide_data.get("image")
+            if image_path and Path(image_path).exists():
+                try:
+                    sl.shapes.add_picture(image_path, Inches(6.5), Inches(1.5), width=Inches(6.0))
+                except Exception:
+                    pass
 
         prs.save(str(out_path))
         size_kb = out_path.stat().st_size // 1024
@@ -555,8 +577,8 @@ class DocumentCreateDocxTool(BaseTool):
                         "JSON array of sections. Each section (all fields optional): "
                         "{\"heading\": str, \"level\": int (1-3, default 1), "
                         "\"text\": str, \"bullets\": [str], "
-                        "\"table\": {\"headers\": [str], \"rows\": [[value]]}}. "
-                        "Example: [{\"heading\": \"Summary\", \"level\": 1, \"text\": \"Overview text.\", \"bullets\": [\"Item A\"]}]"
+                        "\"table\": {\"headers\": [str], \"rows\": [[value]]}, \"image\": str (absolute path, optional)}. "
+                        "Example: [{\"heading\": \"Summary\", \"level\": 1, \"text\": \"Overview text.\", \"bullets\": [\"Item A\"], \"image\": \"/path/to/chart.png\"}]"
                     ),
                 },
                 "author": {
@@ -664,6 +686,13 @@ class DocumentCreateDocxTool(BaseTool):
                         for col_idx, val in enumerate(row):
                             if col_idx < num_cols:
                                 tbl_row.cells[col_idx].text = str(val)
+
+            image_path = sec.get("image")
+            if image_path and Path(image_path).exists():
+                try:
+                    doc.add_picture(image_path, width=DocxInches(5.0))
+                except Exception as e:
+                    doc.add_paragraph(f"[Image Error: {e}]")
 
             doc.add_paragraph()  # spacer between sections
 

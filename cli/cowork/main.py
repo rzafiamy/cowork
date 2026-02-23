@@ -1097,6 +1097,45 @@ async def handle_command(
                 else:
                     render_error(f"Unknown field '{field}'. Use: endpoint, token, model.")
 
+    elif command == "/open":
+        if len(cmd.split(maxsplit=1)) < 2:
+            render_error("Usage: /open <path_to_file>")
+        else:
+            path_str = cmd.split(maxsplit=1)[1].strip(' "\'')
+            
+            # Smart-replace if session was renamed (e.g. from new-session to actual slug)
+            if hasattr(session, '_ws') and session._ws:
+                current_slug = session._ws.slug
+                if "new-session" in path_str:
+                    path_str = path_str.replace("new-session", current_slug)
+                else:
+                    # Also handle case where user truncated the long new slug folder
+                    # e.g., typed '0016-agentic-ai-2026-green-slide' instead of the full name
+                    import re
+                    match = re.search(r'workspace/([^/]+)/', path_str)
+                    if match:
+                        typed_slug = match.group(1)
+                        if current_slug.startswith(typed_slug):
+                            path_str = path_str.replace(typed_slug, current_slug)
+
+            path_to_open = Path(path_str).expanduser().resolve()
+            
+            # If still not exist, try to find the filename in the current artifacts directory globally
+            if not path_to_open.exists() and hasattr(session, '_ws') and session._ws:
+                name_only = Path(path_str).name
+                fallback = session._ws.artifacts_path / name_only
+                if fallback.exists():
+                    path_to_open = fallback
+
+            if path_to_open.exists():
+                try:
+                    click.launch(str(path_to_open))
+                    render_success(f"📂 Opened: {path_to_open}")
+                except Exception as e:
+                    render_error(f"Failed to open '{path_to_open}': {e}")
+            else:
+                render_warning(f"Path does not exist: {path_to_open}")
+
     else:
         render_warning(f"Unknown command: {command}. Type /help for available commands.")
 

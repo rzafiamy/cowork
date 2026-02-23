@@ -947,6 +947,7 @@ def render_help() -> None:
         ("/mm <service> <field> <value>",   "Configure vision/image/ASR/TTS services"),
         ("/model",                          "List available AI models on current endpoint"),
         ("/model <name>",                   "Switch to a specific AI model"),
+        ("/open <path>",                    "Open a specific file locally (no AI)"),
         ("/workspace open",          "Open workspace folder path in terminal"),
         ("/workspace clean",         "Delete all sessions and workspace folders"),
         ("/scratchpad",                     "List scratchpad contents"),
