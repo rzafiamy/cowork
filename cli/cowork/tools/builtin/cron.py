@@ -16,8 +16,8 @@ class CronScheduleTool(BaseTool):
     def description(self) -> str:
         return (
             "Schedule a recurring or one-time task for the agent. "
-            "The agent will be triggered at the specified time with the given prompt. "
-            "Use this for daily digests, reminders, or periodic research."
+            "Note: These tasks run ONLY while the CLI session is active and are NOT system cron jobs. "
+            "The agent will be triggered at the specified time with the given prompt."
         )
 
     @property
@@ -45,15 +45,13 @@ class CronScheduleTool(BaseTool):
 
     def execute(self, prompt: str, schedule_type: str, schedule_value: str) -> str:
         self._emit("⏰ Scheduling cron task...")
-        # Since the original Tools class didn't have CronManager in its __init__, 
-        # but it was imported in tools.py, we can just instantiate it or use the global one if it existed.
         mgr = CronManager()
-        # The original code for _tool_cron_schedule was missing in the view_file output 
-        # (it was probably further down), but I can infer its purpose.
-        # However, looking at tools.py again, I see it's quite simple.
-        # Actually I didn't see the implementation of _tool_cron_schedule in Step 9.
-        # Let's check it.
-        return f"✅ Task scheduled: {schedule_type} @ {schedule_value}"
+        job = mgr.add_job(
+            prompt=prompt,
+            schedule_type=schedule_type,
+            schedule_value=schedule_value
+        )
+        return f"✅ Task scheduled: {schedule_type} @ {schedule_value} (Job ID: {job.job_id})"
 
 class CronListTool(BaseTool):
     @property
