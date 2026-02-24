@@ -614,6 +614,7 @@ class GeneralPurposeAgent:
         active_skill: ActiveSkillContext = self.skill_runtime.activate(processed_input, categories)
         categories = self.skill_runtime.merge_categories(categories, active_skill)
         if active_skill.skill:
+            job.skill_name = active_skill.skill.name
             if active_skill.enabled:
                 self.status_cb(
                     f"🧩  Skill activated: {active_skill.skill.name} (tier {active_skill.trust.tier}, score {active_skill.score:.2f})"

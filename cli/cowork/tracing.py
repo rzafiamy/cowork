@@ -192,6 +192,8 @@ def _event_theme(event: str) -> tuple[str, str]:
         return "🧠", "secondary"
     if event.startswith("router_"):
         return "🧭", "router"
+    if event == "skill_routing":
+        return "🧩", "primary"
     if event.startswith("memory_"):
         return "🧠", "memory"
     if event.startswith("tool_"):

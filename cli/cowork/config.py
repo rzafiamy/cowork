@@ -574,6 +574,7 @@ class AgentJob:
         self.categories: list[str] = []
         self.tool_calls_list: list[dict] = []
         self.trace_path: str = ""
+        self.skill_name: Optional[str] = None
 
     def to_dict(self) -> dict:
         return self.__dict__.copy()

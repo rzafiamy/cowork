@@ -253,13 +253,8 @@ def render_response(content: str, elapsed: float, tool_calls: int = 0, step_coun
         body = Text(content)
 
     console.print()
-    console.print(Panel(
-        Group(body, Text(""), Text.from_markup(stats)),
-        title="[secondary]🤖 Cowork[/secondary]",
-        border_style="secondary",
-        padding=(1, 2),
-        expand=True,
-    ))
+    console.print(body)
+    console.print(Text.from_markup(stats))
     console.print()
     
     # Push the LLM response text into the Autocompleter session words
@@ -301,6 +296,33 @@ def render_routing_info(categories: list[str], confidence: float, reasoning: str
         grid,
         title="[phase2]🧭 Meta-Router Decision[/phase2]",
         border_style="router",
+        padding=(0, 1),
+    ))
+
+
+def render_skill_info(name: str, score: float, tier: int, description: str = "", categories: list[str] = None) -> None:
+    """Show the activated skill detail."""
+    tier_star = "★" * tier + "☆" * (4 - tier)
+    tier_color = "success" if tier >= 3 else "warning" if tier == 2 else "error"
+    
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="muted", justify="right", width=14)
+    grid.add_column()
+    grid.add_row("Skill", f"[highlight]{name}[/highlight]")
+    grid.add_row("Precision", f"[highlight]{score:.2f}[/highlight]")
+    grid.add_row("Trust Tier", f"[{tier_color}]{tier_star}[/{tier_color}] [dim_text](Tier {tier})[/dim_text]")
+    
+    if categories:
+        cats_styled = [f"[tool]{c.replace('_TOOLS', '')}[/tool]" for c in categories]
+        grid.add_row("Capabilities", " + ".join(cats_styled))
+
+    if description:
+        grid.add_row("Description", f"[italic_muted]{description[:80].strip()}[/italic_muted]")
+
+    console.print(Panel(
+        grid,
+        title="[phase3]🧩 Skill Activation[/phase3]",
+        border_style="primary",
         padding=(0, 1),
     ))
 

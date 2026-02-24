@@ -73,6 +73,7 @@ from .ui import (
     render_memory_status,
     render_response,
     render_routing_info,
+    render_skill_info,
     render_session_list,
     render_session_stats,
     render_success,
@@ -252,6 +253,7 @@ async def run_agent_turn(
     stream_renderer = StreamingRenderer()
     status_messages: list[str] = []
     routing_info: Optional[dict] = None
+    active_skill_info: Optional[Any] = None
 
     # Patch router to capture routing info
     original_classify = None
@@ -290,6 +292,15 @@ async def run_agent_turn(
             routing_info = result
             return result
 
+        # Capture skill activation
+        original_activate = agent.skill_runtime.activate
+
+        def patched_activate(user_input: str, routed_categories: list[str]):
+            result = original_activate(user_input, routed_categories)
+            nonlocal active_skill_info
+            active_skill_info = result
+            return result
+
         async def on_confirm(name: str, reason: str, args: dict) -> bool:
             if unattended:
                 # In unattended mode, we cannot ask for permission.
@@ -316,6 +327,7 @@ async def run_agent_turn(
             return res
 
         agent.router.classify = patched_classify
+        agent.skill_runtime.activate = patched_activate
         agent.confirm_cb = on_confirm
 
         response = await agent.run(effective_input, session, job, action_mode=effective_action_mode)
@@ -330,6 +342,16 @@ async def run_agent_turn(
                 routing_info["categories"],
                 routing_info["confidence"],
                 routing_info.get("reasoning", ""),
+            )
+
+        # Show skill info if available
+        if show_routing and active_skill_info and active_skill_info.skill:
+            render_skill_info(
+                active_skill_info.skill.name,
+                active_skill_info.score,
+                active_skill_info.trust.tier if active_skill_info.trust else 1,
+                active_skill_info.skill.description,
+                active_skill_info.skill.tool_categories,
             )
 
         # Render response
@@ -860,6 +882,8 @@ async def handle_command(
         if _last_job:
             tree = Tree(f"[primary]🔍 Trace: Job {_last_job.job_id}[/primary]")
             tree.add(f"[muted]Status:[/muted] {_last_job.status}")
+            if _last_job.skill_name:
+                tree.add(f"🧩 [highlight]Active Skill:[/highlight] {_last_job.skill_name}")
             tree.add(f"[muted]Steps:[/muted] {_last_job.steps}")
             tree.add(f"[muted]Tool Calls:[/muted] {_last_job.tool_calls}")
             if getattr(_last_job, "trace_path", ""):
@@ -2069,7 +2093,7 @@ def cron() -> None:
 
 
 @cron.command()
-def list() -> None:
+def cron_list() -> None:
     """List all scheduled cron jobs."""
     mgr = CronManager()
     render_cron_list(mgr.list_all())
