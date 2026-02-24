@@ -68,10 +68,13 @@ from .ui import (
     render_error,
     render_help,
     render_job_dashboard,
+    render_memory_dashboard,
+    render_memory_search_results,
     render_memory_status,
     render_response,
     render_routing_info,
     render_session_list,
+    render_session_stats,
     render_success,
     render_model_list,
     render_token_usage,
@@ -877,6 +880,28 @@ async def handle_command(
             console.print(tree)
         else:
             console.print("[muted]No trace available yet.[/muted]")
+
+    elif command in ("/stats", "/st"):
+        # Aggregate session statistics
+        totals = _token_tracker.get_totals()
+        items = scratchpad.list_all()
+        stats = {
+            "session_id": session.session_id,
+            "title": session.title,
+            "created_at": session.created_at[:19].replace("T", " ") if session.created_at else "—",
+            "message_count": len(session.messages),
+            "memory_triplets": memoria.get_triplet_count(),
+            "has_summary": bool(memoria.get_summary()),
+            "user_id": _get_memory_user_id()[:8] + "...",
+            "scratchpad_items": len(items),
+            "scratchpad_chars": sum(it.get("size_chars", 0) for it in items),
+            "workspace_path": str(session._ws.path) if hasattr(session, "_ws") and session._ws else "(none)",
+            "total_tokens": totals.get("total_tokens", 0),
+            "prompt_tokens": totals.get("prompt_tokens", 0),
+            "completion_tokens": totals.get("completion_tokens", 0),
+            "request_count": totals.get("request_count", 0),
+        }
+        render_session_stats(stats)
 
     elif command == "/tokens":
         if len(parts) > 1 and parts[1] == "reset":

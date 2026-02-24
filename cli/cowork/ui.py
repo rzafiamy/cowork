@@ -906,6 +906,72 @@ def confirm_tool_call(tool_name: str, reason: str, args: dict) -> bool:
     return Confirm.ask("Proceed?", default=False, console=console)
 
 
+def render_session_stats(stats: dict) -> None:
+    """Render a comprehensive dashboard of current session statistics."""
+    from rich.columns import Columns
+
+    # 1. Session Info Card
+    s_grid = Table.grid(padding=(0, 2))
+    s_grid.add_column(style="highlight", justify="right", width=14)
+    s_grid.add_column()
+    s_grid.add_row("Session ID", stats["session_id"])
+    s_grid.add_row("Title", stats["title"])
+    s_grid.add_row("Created", stats["created_at"])
+    s_grid.add_row("Messages", f"[bold_white]{stats['message_count']}[/bold_white]")
+    
+    s_panel = Panel(s_grid, title="[primary]🆔 Session[/primary]", border_style="primary")
+
+    # 2. Memory Card
+    m_grid = Table.grid(padding=(0, 2))
+    m_grid.add_column(style="sentinel", justify="right", width=14)
+    m_grid.add_column()
+    m_grid.add_row("Knowledge", f"[bold_white]{stats['memory_triplets']}[/bold_white] facts")
+    m_grid.add_row("Summary", "[success]active[/success]" if stats["has_summary"] else "[muted]none[/muted]")
+    m_grid.add_row("User ID", stats["user_id"])
+    
+    m_panel = Panel(m_grid, title="[sentinel]🧠 Memory[/sentinel]", border_style="sentinel")
+
+    # 3. Scratchpad Card
+    sc_grid = Table.grid(padding=(0, 2))
+    sc_grid.add_column(style="memory", justify="right", width=14)
+    sc_grid.add_column()
+    sc_grid.add_row("Items", f"[bold_white]{stats['scratchpad_items']}[/bold_white]")
+    sc_grid.add_row("Total Size", f"{stats['scratchpad_chars']:,} chars")
+    
+    sc_panel = Panel(sc_grid, title="[memory]📝 Scratchpad[/memory]", border_style="memory")
+
+    # 4. Workspace Card
+    ws_panel = Panel(
+        f"[dim_text]{stats['workspace_path']}[/dim_text]",
+        title="[highlight]📂 Workspace[/highlight]",
+        border_style="highlight"
+    )
+
+    # 5. Token Usage Card
+    t_grid = Table.grid(padding=(0, 2))
+    t_grid.add_column(style="accent", justify="right", width=14)
+    t_grid.add_column()
+    t_grid.add_row("Total Tokens", f"[bold_white]{stats['total_tokens']:,}[/bold_white]")
+    t_grid.add_row("Requests", f"{stats['request_count']:,}")
+    t_grid.add_row("Prompt", f"[router]{stats['prompt_tokens']:,}[/router]")
+    t_grid.add_row("Completion", f"[tool]{stats['completion_tokens']:,}[/tool]")
+    
+    t_panel = Panel(t_grid, title="[accent]📊 Token Usage (Total)[/accent]", border_style="accent")
+
+    # Layout
+    console.print(Panel(
+        Group(
+            Columns([s_panel, m_panel, sc_panel], expand=True),
+            ws_panel,
+            t_panel
+        ),
+        title="[highlight]🚀 Cowork Session Statistics[/highlight]",
+        border_style="highlight",
+        padding=(1, 2)
+    ))
+
+
+
 # ─── Help Display ─────────────────────────────────────────────────────────────
 
 def render_help() -> None:
@@ -935,6 +1001,7 @@ def render_help() -> None:
         ("/issues rm <id>",                 "Remove an issue by ID"),
         ("/config",                         "Show current configuration"),
         ("/config set <key> <value>",        "Update a configuration value"),
+        ("/stats or /st",                   "Show session statistics (memory, tokens, etc)"),
         ("/tokens",                         "Show token usage per model/endpoint"),
         ("/tokens reset",                   "Reset all token usage counters"),
         ("/reset",                          "Delete all ~/.cowork/* data and exit"),
@@ -1051,6 +1118,8 @@ SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/jobs resume ",            "Resume job by ID prefix  e.g. /jobs resume abc12"),
     ("/config",                  "Show current configuration"),
     ("/config set ",             "Set a config value  e.g. /config set stream false"),
+    ("/stats",                   "Show session statistics and resource usage"),
+    ("/st",                      "Show session statistics and resource usage"),
     ("/tokens",                  "Show token usage per model / endpoint"),
     ("/tokens reset",            "Reset all token usage counters"),
     ("/reset",                   "Delete all ~/.cowork/* data and exit"),
