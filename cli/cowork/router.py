@@ -398,6 +398,9 @@ class MetaRouter:
             categories.append("SESSION_SCRATCHPAD")
         if any(w in p for w in ["workspace", "artifact", "write file", "save file", "fichier", "écrire"]):
             categories.append("WORKSPACE_TOOLS")
+        # Document Tools
+        if any(w in p for w in ["pdf", "docx", "xlsx", "pptx", "word", "excel", "spreadsheet", "presentation", "report", "document"]):
+            categories.append("DOCUMENT_TOOLS")
 
         # Nextcloud
         if any(w in p for w in ["nextcloud", "cloud sync", "cloud storage"]):

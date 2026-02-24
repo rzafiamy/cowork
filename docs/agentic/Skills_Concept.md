@@ -42,6 +42,24 @@ The Skills system acts as a **Deterministic Firewall**:
 
 ---
 
+## 🛠️ Managing Skills
+
+Skills are managed entirely via the filesystem. The agent automatically discovers new skills by scanning the library.
+
+### ➕ Adding a Skill
+1. Create a subfolder in `cli/cowork/skills/library/`.
+2. Create a `SKILL.md` file inside that folder.
+3. Define the **YAML frontmatter** (required `name` and `description`).
+4. Add the instruction body below the frontmatter.
+
+### 🗑️ Removing a Skill
+Delete the folder containing the `SKILL.md` file.
+
+### 🔄 Updating a Skill
+Modify the `SKILL.md` file directly. Changes are picked up on the next agent turn.
+
+---
+
 ## 📍 Implementation Reference
 - **Runtime Logic**: `cli/cowork/skills/runtime.py`
 - **Scoring Algorithm**: `cli/cowork/skills/router.py`
