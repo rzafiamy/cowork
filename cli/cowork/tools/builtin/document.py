@@ -235,7 +235,7 @@ class DocumentCreatePptxTool(BaseTool):
         return (
             "Create a PowerPoint (.pptx) presentation and save it to the workspace artifacts folder. "
             "Accepts a list of slides as JSON: "
-            "[{\"title\": \"...\", \"content\": \"...\", \"bullets\": [\"...\"], \"layout\": \"auto|section|text_image\"}, ...]. "
+            "[{\"title\": \"...\", \"content\": \"...\", \"bullets\": [\"...\"], \"layout\": \"auto|full_text|centered|section|text_image\"}, ...]. "
             "The first slide is automatically a title slide. "
             "Returns the absolute file path for use with email attachments."
         )
@@ -267,7 +267,7 @@ class DocumentCreatePptxTool(BaseTool):
                         "JSON array of slides. Each slide: "
                         "{\"title\": str, \"content\": str (optional), \"bullets\": [str] (optional), "
                         "\"image\": str (absolute path, optional), \"key_message\": str (optional), "
-                        "\"layout\": \"auto|section|text_image\" (optional)}. "
+                        "\"layout\": \"auto|full_text|centered|section|text_image\" (optional)}. "
                         "Example: [{\"title\": \"Introduction\", \"bullets\": [\"Key point 1\"], \"layout\": \"auto\"}]"
                     ),
                 },
@@ -277,7 +277,7 @@ class DocumentCreatePptxTool(BaseTool):
                 },
                 "design_preset": {
                     "type": "string",
-                    "description": "Visual style preset: 'executive' (default), 'bold', or 'minimal'",
+                    "description": "Visual style preset: 'executive' (default), 'bold', 'minimal', or 'modern-light'",
                 },
             },
             "required": ["filename", "title", "slides"],
@@ -332,7 +332,7 @@ class DocumentCreatePptxTool(BaseTool):
             )
 
         preset = (design_preset or "executive").strip().lower()
-        if preset not in {"executive", "bold", "minimal"}:
+        if preset not in {"executive", "bold", "minimal", "modern-light"}:
             preset = "executive"
 
         palettes = {
@@ -356,6 +356,13 @@ class DocumentCreatePptxTool(BaseTool):
                 "surface": (236, 240, 245),
                 "text": (30, 37, 46),
                 "muted": (112, 122, 132),
+            },
+            "modern-light": {
+                "accent": (59, 130, 246),
+                "bg": (255, 255, 255),
+                "surface": (248, 250, 252),
+                "text": (30, 41, 59),
+                "muted": (100, 116, 139),
             },
         }
         palette = palettes[preset].copy()
@@ -416,9 +423,13 @@ class DocumentCreatePptxTool(BaseTool):
         # Cover slide
         cover = prs.slides.add_slide(blank_layout)
         _add_rect(cover, 0, 0, 13.33, 7.5, palette["bg"])
-        _add_rect(cover, 0, 0, 13.33, 1.2, palette["accent_dark"])
-        _add_rect(cover, 0, 5.9, 13.33, 1.6, palette["accent"])
-        _add_rect(cover, 8.8, 1.2, 4.53, 4.7, palette["accent_soft"])
+        if preset == "modern-light":
+            # Subtle accent line instead of heavy blocks
+            _add_rect(cover, 0, 0, 13.33, 0.15, palette["accent"])
+        else:
+            _add_rect(cover, 0, 0, 13.33, 1.2, palette["accent_dark"])
+            _add_rect(cover, 0, 5.9, 13.33, 1.6, palette["accent"])
+            _add_rect(cover, 8.8, 1.2, 4.53, 4.7, palette["accent_soft"])
         _add_textbox(
             cover,
             0.8,
@@ -467,13 +478,29 @@ class DocumentCreatePptxTool(BaseTool):
             bullets = [_trim_text(b, 92) for b in bullets]
             key_message = _trim_text(slide_data.get("key_message", ""), 140)
             layout = (slide_data.get("layout", "auto") or "auto").strip().lower()
-            if layout not in {"auto", "section", "text_image"}:
+
+            image_path = slide_data.get("image")
+            has_image = bool(image_path and Path(image_path).exists())
+
+            if layout not in {"auto", "section", "text_image", "centered", "full_text"}: # Updated valid layouts
                 layout = "auto"
             if layout == "auto":
-                layout = "text_image"
+                if not content_text and not bullets:
+                    layout = "centered"
+                elif has_image:
+                    layout = "text_image"
+                elif len(content_text or "") < 100 and len(bullets or []) < 2:
+                    layout = "centered"
+                else:
+                    layout = "full_text"
 
             _add_rect(sl, 0, 0, 13.33, 7.5, palette["bg"])
-            _add_rect(sl, 0, 0, 13.33, 0.85, palette["accent_dark"])
+            if preset == "modern-light":
+                _add_rect(sl, 0, 0, 13.33, 0.08, palette["accent"])
+            else:
+                _add_rect(sl, 0, 0, 13.33, 0.85, palette["accent_dark"])
+
+            title_color = palette["accent_dark"] if preset == "modern-light" else (250, 252, 255)
             _add_textbox(
                 sl,
                 0.35,
@@ -483,10 +510,11 @@ class DocumentCreatePptxTool(BaseTool):
                 slide_title,
                 21,
                 bold=True,
-                color=(250, 252, 255),
+                color=title_color,
                 align=PP_ALIGN.LEFT,
                 font_name="Aptos Display",
             )
+            page_num_color = palette["muted"] if preset == "modern-light" else (224, 232, 242)
             _add_textbox(
                 sl,
                 12.2,
@@ -495,7 +523,7 @@ class DocumentCreatePptxTool(BaseTool):
                 0.45,
                 str(i + 2),
                 12,
-                color=(224, 232, 242),
+                color=page_num_color,
                 align=PP_ALIGN.RIGHT,
                 font_name="Aptos",
             )
@@ -530,8 +558,58 @@ class DocumentCreatePptxTool(BaseTool):
                     )
                 continue
 
-            image_path = slide_data.get("image")
-            has_image = bool(image_path and Path(image_path).exists())
+            if layout == "centered":
+                _add_textbox(
+                    sl,
+                    1.5,
+                    2.8,
+                    10.33,
+                    1.5,
+                    slide_title,
+                    36,
+                    bold=True,
+                    color=palette["accent"],
+                    align=PP_ALIGN.CENTER,
+                    font_name="Aptos Display",
+                )
+                if content_text:
+                    _add_textbox(
+                        sl,
+                        2.0,
+                        4.5,
+                        9.33,
+                        1.2,
+                        content_text,
+                        20,
+                        color=palette["text"],
+                        align=PP_ALIGN.CENTER,
+                        font_name="Aptos",
+                    )
+                continue
+
+            if layout == "full_text":
+                y_offset = 1.3
+                if content_text:
+                    _add_textbox(
+                        sl, 0.8, y_offset, 11.7, 1.2, content_text, 18,
+                        color=palette["text"], align=PP_ALIGN.LEFT
+                    )
+                    y_offset += 1.4
+                if bullets:
+                    bullet_box = sl.shapes.add_textbox(Inches(0.8), Inches(y_offset), Inches(11.7), Inches(4.5))
+                    tf = bullet_box.text_frame
+                    tf.word_wrap = True
+                    for idx, bullet in enumerate(bullets):
+                        p = tf.add_paragraph() if idx > 0 else tf.paragraphs[0]
+                        p.text = f"• {bullet}"
+                        p.space_before = Pt(8)
+                        for run in p.runs:
+                            run.font.size = Pt(20)
+                            run.font.name = "Aptos"
+                            run.font.color.rgb = _as_rgb(palette["text"])
+                continue
+
+            # Default: text_image (Split Layout)
             image_on_right = (i % 2 == 0)
             text_left = 0.6 if image_on_right else 6.95
             image_left = 6.95 if image_on_right else 0.6
