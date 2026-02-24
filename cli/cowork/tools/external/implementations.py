@@ -47,7 +47,7 @@ for mod in _modules:
             EXTERNAL_TOOL_HANDLERS[name] = handler
 
 # Maintain KEY_REQUIREMENTS for get_available_external_tools
-KEY_REQUIREMENTS: dict[str, str | list[str] | None] = {
+KEY_REQUIREMENTS: dict[str, str | list[str] | dict[str, list[str]] | None] = {
     "youtube_search":       "YOUTUBE_API_KEY",
     "youtube_transcript":   None,
     "youtube_metadata":     "YOUTUBE_API_KEY",
@@ -68,11 +68,13 @@ KEY_REQUIREMENTS: dict[str, str | list[str] | None] = {
     "telegram_send_message":"TELEGRAM_BOT_TOKEN",
     "slack_send_message":   "SLACK_BOT_TOKEN",
     "twitter_post_tweet":   "TWITTER_BEARER_TOKEN",
-    "google_calendar_events":      None,
-    "google_calendar_create_event":None,
-    "google_drive_search":         None,
-    "google_drive_upload_text":    None,
-    "gmail_send_email":            "GOOGLE_API_KEY",
+    # Google productivity tools require OAuth credentials (client JSON or ID/secret pair).
+    # Optional token can be preloaded via GOOGLE_TOKEN_JSON / GOOGLE_TOKEN_FILE.
+    "google_calendar_events":      {"any_of": ["GOOGLE_CREDENTIALS_FILE", "GOOGLE_OAUTH_CREDENTIALS_JSON"], "all_of": ["GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET"]},
+    "google_calendar_create_event":{"any_of": ["GOOGLE_CREDENTIALS_FILE", "GOOGLE_OAUTH_CREDENTIALS_JSON"], "all_of": ["GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET"]},
+    "google_drive_search":         {"any_of": ["GOOGLE_CREDENTIALS_FILE", "GOOGLE_OAUTH_CREDENTIALS_JSON"], "all_of": ["GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET"]},
+    "google_drive_upload_text":    {"any_of": ["GOOGLE_CREDENTIALS_FILE", "GOOGLE_OAUTH_CREDENTIALS_JSON"], "all_of": ["GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET"]},
+    "gmail_send_email":            {"any_of": ["GOOGLE_CREDENTIALS_FILE", "GOOGLE_OAUTH_CREDENTIALS_JSON"], "all_of": ["GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET"]},
     "linkedin_search":      None,
     "whatsapp_send_message":None,
     "nextcloud_list":       ["NEXTCLOUD_URL", "NEXTCLOUD_WEBDAV_URL"],
@@ -100,6 +102,12 @@ def get_available_external_tools() -> list[dict]:
         is_available = False
         if required is None:
             is_available = True
+        elif isinstance(required, dict):
+            any_of = required.get("any_of") or []
+            all_of = required.get("all_of") or []
+            has_any = any(_env(k) for k in any_of) if any_of else True
+            has_all = all(_env(k) for k in all_of) if all_of else True
+            is_available = has_any or has_all
         elif isinstance(required, list):
             is_available = any(_env(k) for k in required)
         else:

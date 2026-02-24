@@ -4,11 +4,12 @@ Implements the Brain phase — dynamic tool schema loading via intent classifica
 """
 
 import json
+import re
 from typing import Any, Optional
 
-from .prompts import ROUTER_CATEGORY_DESCRIPTIONS, ROUTER_SYSTEM_TEMPLATE, ROUTER_USER_TEMPLATE
+from .prompts import ROUTER_SYSTEM_TEMPLATE, ROUTER_USER_TEMPLATE
 from .theme import CATEGORY_STYLES, OP_DEFAULTS
-from .tools import get_all_available_tools
+from .tools import get_all_available_tools, get_category_descriptions
 
 def get_supported_domains() -> list[str]:
     """Get list of categories that have at least one available tool."""
@@ -25,7 +26,7 @@ def get_supported_domains() -> list[str]:
     return sorted(list(domains))
 
 # ─── Prompts are centralized in prompts.py ───────────────────────────────────
-# Import: ROUTER_CATEGORY_DESCRIPTIONS, ROUTER_SYSTEM_TEMPLATE, ROUTER_USER_TEMPLATE
+# Import: ROUTER_SYSTEM_TEMPLATE, ROUTER_USER_TEMPLATE
 
 
 class MetaRouter:
@@ -157,6 +158,39 @@ class MetaRouter:
 
         return None
 
+    def _multimodal_requested(self, prompt: str) -> bool:
+        p = (prompt or "").lower()
+        patterns = [
+            r"\bgenerate (an? )?image\b", r"\bcreate (an? )?image\b", r"\bmake (an? )?image\b",
+            r"\bdraw\b", r"\bdall-?e\b", r"\bstable diffusion\b",
+            r"\bvision\b", r"\banaly[sz]e image\b", r"\bdescribe image\b", r"\bocr\b",
+            r"\btext to speech\b", r"\btts\b", r"\bspeech to text\b", r"\bstt\b", r"\btranscribe\b",
+            r"\bgénérer image\b", r"\bcréer image\b", r"\bdessiner\b", r"\bsynthèse vocale\b",
+        ]
+        return any(re.search(pat, p) for pat in patterns)
+
+    def _weather_intent(self, prompt: str) -> bool:
+        p = (prompt or "").lower()
+        return any(w in p for w in [
+            "weather", "forecast", "temperature", "rain", "snow", "wind", "storm",
+            "météo", "meteo", "prévision", "température", "pluie", "neige", "vent", "orage",
+        ])
+
+    def _postprocess_categories(self, prompt: str, categories: list[str], domains: list[str]) -> list[str]:
+        out = list(dict.fromkeys(categories))
+
+        # Prune multimodal leakage unless the user explicitly asked for image/audio/vision.
+        if "MULTIMODAL_TOOLS" in out and not self._multimodal_requested(prompt):
+            out = [c for c in out if c != "MULTIMODAL_TOOLS"]
+
+        # Force weather tools for obvious weather intent.
+        if self._weather_intent(prompt) and "WEATHER_TOOLS" in domains and "WEATHER_TOOLS" not in out:
+            out.append("WEATHER_TOOLS")
+
+        if not out:
+            out = ["ALL_TOOLS"]
+        return out
+
     async def classify(self, prompt: str) -> dict:
         """
         Classify the user's intent.
@@ -181,8 +215,9 @@ class MetaRouter:
         # Build dynamic system prompt
         domains = get_supported_domains()
         category_lines = []
+        dynamic_desc = get_category_descriptions(available_only=True)
         for d in domains:
-            desc = ROUTER_CATEGORY_DESCRIPTIONS.get(d, "No description available")
+            desc = dynamic_desc.get(d, "No description available")
             category_lines.append(f"- {d}: {desc}")
         
         category_list_str = "\n".join(category_lines)
@@ -238,6 +273,7 @@ class MetaRouter:
                     res["reasoning"] = "Calibrated to conversational-only after LLM routing failure."
                 else:
                     res["reasoning"] = f"Keyword-based fallback (LLM routing failed: {hint})"
+                res["categories"] = self._postprocess_categories(prompt, res.get("categories", []), domains)
                 return res
 
         # Guard: if router output was truncated, retry once with a compact-output nudge.
@@ -296,6 +332,7 @@ class MetaRouter:
             if any(c in valid for c in ["NEWS_TOOLS", "WEATHER_TOOLS", "WEB_TOOLS"]):
                 if "SEARCH_TOOLS" not in valid:
                     valid.append("SEARCH_TOOLS")
+            valid = self._postprocess_categories(prompt, valid, domains)
 
             routed = {
                 "categories": valid,
@@ -316,6 +353,7 @@ class MetaRouter:
                 res["reasoning"] = "Calibrated to conversational-only after fallback."
             else:
                 res["reasoning"] = f"Keyword-based fallback (JSON parse error: {e})"
+            res["categories"] = self._postprocess_categories(prompt, res.get("categories", []), domains)
             return res
 
     def _keyword_fallback(self, prompt: str) -> dict:

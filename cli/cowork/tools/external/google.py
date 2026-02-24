@@ -4,6 +4,8 @@ Implementations for Google Calendar, Drive, and Gmail.
 """
 
 import base64
+import json
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -18,10 +20,87 @@ try:
 except ImportError:
     GOOGLE_LIBS_AVAILABLE = False
 
+_EMAIL_RE = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$", re.IGNORECASE)
+
+
+def _materialize_google_credentials_file(default_path: Path) -> Path:
+    """
+    Resolve OAuth client credentials for Google APIs from env or disk.
+    Priority:
+    1) GOOGLE_CREDENTIALS_FILE (absolute/relative path)
+    2) GOOGLE_OAUTH_CREDENTIALS_JSON (full OAuth client JSON payload)
+    3) GOOGLE_OAUTH_CLIENT_ID + GOOGLE_OAUTH_CLIENT_SECRET (+ optional project/redirect)
+    """
+    explicit = (_env("GOOGLE_CREDENTIALS_FILE") or "").strip()
+    if explicit:
+        p = Path(explicit).expanduser()
+        if p.exists() and p.is_file():
+            return p
+
+    raw_json = (_env("GOOGLE_OAUTH_CREDENTIALS_JSON") or "").strip()
+    if raw_json:
+        try:
+            payload = json.loads(raw_json)
+            default_path.parent.mkdir(parents=True, exist_ok=True)
+            default_path.write_text(json.dumps(payload), encoding="utf-8")
+            return default_path
+        except Exception:
+            return default_path
+
+    client_id = (_env("GOOGLE_OAUTH_CLIENT_ID") or "").strip()
+    client_secret = (_env("GOOGLE_OAUTH_CLIENT_SECRET") or "").strip()
+    if client_id and client_secret:
+        project_id = (_env("GOOGLE_OAUTH_PROJECT_ID") or "cowork").strip()
+        redirect_uri = (_env("GOOGLE_OAUTH_REDIRECT_URI") or "http://localhost").strip()
+        payload = {
+            "installed": {
+                "client_id": client_id,
+                "project_id": project_id,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                "client_secret": client_secret,
+                "redirect_uris": [redirect_uri],
+            }
+        }
+        default_path.parent.mkdir(parents=True, exist_ok=True)
+        default_path.write_text(json.dumps(payload), encoding="utf-8")
+        return default_path
+
+    return default_path
+
+
+def _materialize_google_token_file(default_path: Path) -> Path:
+    """
+    Resolve OAuth user token from env or disk.
+    Priority:
+    1) GOOGLE_TOKEN_FILE (absolute/relative path)
+    2) GOOGLE_TOKEN_JSON (raw authorized-user JSON)
+    3) ~/.cowork/google_token.json
+    """
+    explicit = (_env("GOOGLE_TOKEN_FILE") or "").strip()
+    if explicit:
+        p = Path(explicit).expanduser()
+        if p.exists() and p.is_file():
+            return p
+
+    token_json = (_env("GOOGLE_TOKEN_JSON") or "").strip()
+    if token_json:
+        try:
+            payload = json.loads(token_json)
+            default_path.parent.mkdir(parents=True, exist_ok=True)
+            default_path.write_text(json.dumps(payload), encoding="utf-8")
+            return default_path
+        except Exception:
+            return default_path
+
+    return default_path
+
+
 def _get_google_creds(scopes: list[str]):
     if not GOOGLE_LIBS_AVAILABLE: return None, "❌ Google libs missing."
-    token_path = Path.home() / ".cowork" / "google_token.json"
-    creds_path = Path.home() / ".cowork" / "google_credentials.json"
+    token_path = _materialize_google_token_file(Path.home() / ".cowork" / "google_token.json")
+    creds_path = _materialize_google_credentials_file(Path.home() / ".cowork" / "google_credentials.json")
     creds = None
     if token_path.exists(): creds = Credentials.from_authorized_user_file(str(token_path), scopes)
     if not creds or not creds.valid:
@@ -102,6 +181,12 @@ def gmail_send_email(
     from email.mime.text import MIMEText
     from email.mime.base import MIMEBase
     from email import encoders
+
+    if not str(recipient or "").strip() or not _EMAIL_RE.match(str(recipient).strip()):
+        return (
+            f"❌ Invalid recipient email: `{recipient}`.\n"
+            "Please ask the user to confirm the exact recipient address."
+        )
 
     creds, err = _get_google_creds(["https://www.googleapis.com/auth/gmail.send"])
     if err: return err

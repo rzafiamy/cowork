@@ -32,6 +32,12 @@ EXTERNAL_CATEGORIES = {
     "SOCIAL_TOOLS", "NEXTCLOUD_TOOLS", "GIT_TOOLS",
 }
 
+SPECIAL_CATEGORY_DESCRIPTIONS: Dict[str, str] = {
+    "CONVERSATIONAL": "Simple chat, explanation, and opinion turns that do not need tools.",
+    "CONVERSATIONAL_ONLY": "Direct-answer mode with no tool schema construction.",
+    "ALL_TOOLS": "Ambiguous tasks where broad tool availability is required.",
+}
+
 def get_tools_for_categories(categories: List[str]) -> List[Dict[str, Any]]:
     """Filter tool schemas to only those in the given categories."""
     if "ALL_TOOLS" in categories:
@@ -83,6 +89,30 @@ def get_all_available_tools() -> List[Dict[str, Any]]:
     return result
 
 
+def get_category_descriptions(available_only: bool = True) -> Dict[str, str]:
+    """
+    Build category descriptions dynamically from the tool registry.
+    This avoids hardcoding stale category prompt text.
+    """
+    tools = get_all_available_tools() if available_only else ALL_TOOLS
+    by_cat: Dict[str, List[Dict[str, Any]]] = {}
+    for tool in tools:
+        cat = str(tool.get("category", "")).strip()
+        if not cat:
+            continue
+        by_cat.setdefault(cat, []).append(tool)
+
+    out: Dict[str, str] = {}
+    for cat, items in by_cat.items():
+        names = [str(t.get("function", {}).get("name", "")) for t in items]
+        names = [n for n in names if n]
+        preview = ", ".join(names[:4]) + ("..." if len(names) > 4 else "")
+        out[cat] = f"{len(items)} tool(s): {preview}" if preview else f"{len(items)} tool(s)"
+
+    out.update(SPECIAL_CATEGORY_DESCRIPTIONS)
+    return out
+
+
 class ExecutionGateway:
     """
     Safety middleware between LLM tool calls and actual execution.
@@ -90,11 +120,54 @@ class ExecutionGateway:
     """
     MAX_ID_LEN    = 150
     MAX_TITLE_LEN = 500
+    _EMAIL_RE = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$", re.IGNORECASE)
+    _SLACK_CHANNEL_RE = re.compile(r"^(#[a-z0-9._\-]+|[CGD][A-Z0-9]{8,})$", re.IGNORECASE)
+    _TELEGRAM_CHAT_RE = re.compile(r"^(@[A-Za-z0-9_]{5,}|-?[0-9]{5,})$")
+    _PLACEHOLDERS = ("example.com", "example.org", "your-email", "foo@bar", "john@doe", "recipient@email.com")
 
     def __init__(self, scratchpad: Scratchpad) -> None:
         self.scratchpad = scratchpad
 
+    def _looks_placeholder(self, value: str) -> bool:
+        v = str(value or "").strip().lower()
+        return any(p in v for p in self._PLACEHOLDERS)
+
+    def _validate_communication_destination(self, tool_name: str, args: dict) -> tuple[bool, str]:
+        if tool_name in ("smtp_send_email", "gmail_send_email"):
+            recipient = str(args.get("recipient", "")).strip()
+            if not recipient:
+                return False, f"{GATEWAY_ERROR_PREFIX} Missing recipient. Ask user to provide the exact address."
+            if self._looks_placeholder(recipient) or not self._EMAIL_RE.match(recipient):
+                return False, (
+                    f"{GATEWAY_ERROR_PREFIX} Invalid/placeholder recipient '{recipient}'. "
+                    "Ask user to confirm the exact email address."
+                )
+        elif tool_name == "slack_send_message":
+            channel = str(args.get("channel", "")).strip()
+            if not channel:
+                return False, f"{GATEWAY_ERROR_PREFIX} Missing Slack channel. Ask user to provide it."
+            if self._looks_placeholder(channel) or not self._SLACK_CHANNEL_RE.match(channel):
+                return False, (
+                    f"{GATEWAY_ERROR_PREFIX} Invalid/placeholder Slack channel '{channel}'. "
+                    "Use #channel or C/G/D channel ID and ask user to confirm."
+                )
+        elif tool_name == "telegram_send_message":
+            chat_id = str(args.get("chat_id", "")).strip()
+            if not chat_id:
+                return False, f"{GATEWAY_ERROR_PREFIX} Missing Telegram chat_id. Ask user to provide it."
+            if self._looks_placeholder(chat_id) or not self._TELEGRAM_CHAT_RE.match(chat_id):
+                return False, (
+                    f"{GATEWAY_ERROR_PREFIX} Invalid/placeholder Telegram chat_id '{chat_id}'. "
+                    "Expected @username or numeric ID; ask user to confirm."
+                )
+        return True, ""
+
     def validate_and_resolve(self, tool_name: str, raw_args: dict) -> tuple[bool, dict, str]:
+        if not isinstance(raw_args, dict):
+            return False, {}, (
+                f"{GATEWAY_ERROR_PREFIX} Tool arguments must be a JSON object."
+            )
+
         schema = TOOL_BY_NAME.get(tool_name)
         if not schema:
             return False, {}, (
@@ -105,6 +178,14 @@ class ExecutionGateway:
         params_schema = schema["function"]["parameters"]
         required = params_schema.get("required", [])
         properties = params_schema.get("properties", {})
+        allowed_fields = set(properties.keys())
+        unknown_fields = [k for k in raw_args.keys() if k not in allowed_fields]
+        if unknown_fields:
+            expected = ", ".join(sorted(allowed_fields)) if allowed_fields else "(no fields)"
+            return False, {}, (
+                f"{GATEWAY_ERROR_PREFIX} Unknown field(s): {', '.join(unknown_fields)}. "
+                f"[HINT]: Expected fields: {expected}."
+            )
 
         resolved = {}
         for field, spec in properties.items():
@@ -135,8 +216,14 @@ class ExecutionGateway:
                 val = val[:self.MAX_ID_LEN]
             if field in ("title", "name") and isinstance(val, str) and len(val) > self.MAX_TITLE_LEN:
                 val = val[:self.MAX_TITLE_LEN]
+            if isinstance(val, str) and field in required and not val.strip():
+                return False, {}, (f"{GATEWAY_ERROR_PREFIX} Field '{field}' cannot be empty.")
 
             resolved[field] = val
+
+        ok_dest, err_dest = self._validate_communication_destination(tool_name, resolved)
+        if not ok_dest:
+            return False, {}, err_dest
 
         return True, resolved, ""
 

@@ -49,6 +49,57 @@ STOPWORDS = {
     "est", "sont", "et", "ou", "sur", "sous", "dans", "avec",
 }
 
+# Strong indicators that a message is a temporary task directive, not durable profile memory.
+TRANSIENT_MEMORY_PATTERNS = [
+    r"\bfor this (task|request|message|email|run|time)\b",
+    r"\bright now\b",
+    r"\btoday\b",
+    r"\btomorrow\b",
+    r"\bthis time\b",
+    r"\bjust this once\b",
+    r"\bcan you\b",
+    r"\bplease\b",
+    r"\bsend (it|this|that|the)\b",
+    r"\bemail (it|this|that|the)\b",
+]
+
+# Durable profile/preference patterns worth storing in long-term memory.
+DURABLE_MEMORY_PATTERNS = [
+    # English
+    r"\bi am\b", r"\bi'm\b", r"\bmy name is\b", r"\bcall me\b", r"\bi live in\b", r"\bi work as\b",
+    r"\bmy email( address)? is\b", r"\bmy phone( number)? is\b", r"\bmy birthday is\b",
+    r"\bi prefer\b", r"\bi like\b", r"\bi dislike\b", r"\bi hate\b", r"\balways\b", r"\bnever\b",
+    r"\bmy goal is\b", r"\bi'm working on\b", r"\bwe are building\b", r"\bwhenever i ask\b",
+    r"\bremember\b", r"\bsave this\b", r"\bfor future\b", r"\bimportant\b", r"\bnote this\b",
+    # French
+    r"\bje suis\b", r"\bmon nom est\b", r"\bj'habite\b", r"\bje travaille\b",
+    r"\bmon email est\b", r"\bmon e-mail est\b", r"\bmon numero est\b", r"\bmon numéro est\b",
+    r"\bje prefere\b", r"\bje préfère\b", r"\bj'aime\b", r"\bje n'aime pas\b",
+    r"\bmon objectif\b", r"\bje travaille sur\b", r"\bnous construisons\b",
+    r"\brappelle\b", r"\bsauvegarde\b", r"\benregistre\b", r"\bpour plus tard\b",
+]
+
+TRIVIAL_CHAT_WORDS = {
+    "ok", "okay", "thanks", "thank", "merci", "bonjour", "salut", "hello", "hi", "hey"
+}
+
+EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.IGNORECASE)
+TASKISH_SUBJECT_TERMS = {
+    "slide", "slides", "story", "document", "docx", "pptx", "chart", "plotchart", "file",
+}
+TRANSIENT_PREDICATE_TERMS = {
+    "wants", "want", "requests", "requested", "asks", "asked", "should", "contains",
+    "topic", "create", "send", "sent", "emailed", "delay", "save", "format", "action",
+}
+DURABLE_PREDICATE_TERMS = {
+    "is", "am", "are", "has", "have", "prefers", "prefer", "likes", "like", "dislikes",
+    "communicates", "uses", "works", "lives", "speaks", "typically", "usually", "always", "never",
+}
+TRANSIENT_OBJECT_TERMS = {
+    "today", "tomorrow", "tonight", "right now", "this task", "this request", "this image",
+    "slide", "slides", "docx", "pptx", "plotchart", "19:00",
+}
+
 # ─── Prompts are centralized in prompts.py ───────────────────────────────────
 # Import: TRIPLET_EXTRACTION_PROMPT, SESSION_SUMMARY_PROMPT, CONTEXT_FUSION_TEMPLATE
 
@@ -425,7 +476,7 @@ class Memoria:
 
     # ── Write Path ────────────────────────────────────────────────────────────
 
-    def _is_durable_memory_candidate(self, user_message: str) -> bool:
+    def is_durable_message(self, user_message: str) -> bool:
         text = user_message.strip()
         if not text:
             return False
@@ -433,31 +484,114 @@ class Memoria:
             return False
 
         lowered = text.lower()
-        patterns = [
-            # English
-            r"\bi am\b", r"\bmy name is\b", r"\bi live in\b", r"\bi work as\b",
-            r"\bi prefer\b", r"\bi like\b", r"\bi dislike\b", r"\balways\b", r"\bnever\b",
-            r"\bmy goal is\b", r"\bi'm working on\b", r"\bwe are building\b",
-            r"\bremember\b", r"\bsave this\b", r"\bfor future\b",
-            # French
-            r"\bje suis\b", r"\bmon nom est\b", r"\bj'habite\b", r"\bje travaille\b",
-            r"\bje prefere\b", r"\bje préfère\b", r"\bj'aime\b", r"\bje n'aime pas\b",
-            r"\bmon objectif\b", r"\bje travaille sur\b", r"\bnous construisons\b",
-            r"\brappelle\b", r"\bsauvegarde\b", r"\benregistre\b", r"\bpour plus tard\b",
-        ]
-        if any(re.search(p, lowered) for p in patterns):
-            return True
-
-        # Default to persisting substantial turns to avoid dropping useful long-term facts.
         words = re.findall(r"[a-zA-Z0-9_]+", lowered)
-        if len(words) >= 6:
+        if words and all(w in TRIVIAL_CHAT_WORDS for w in words):
+            return False
+
+        has_durable_pattern = any(re.search(p, lowered) for p in DURABLE_MEMORY_PATTERNS)
+        has_transient_pattern = any(re.search(p, lowered) for p in TRANSIENT_MEMORY_PATTERNS)
+
+        # Structured contact details are durable only when the user states ownership.
+        has_personal_email = bool(
+            EMAIL_RE.search(text)
+            and ("my email" in lowered or "email address is" in lowered or "mon email" in lowered or "mon e-mail" in lowered)
+        )
+
+        if has_durable_pattern or has_personal_email:
             return True
 
-        # Ignore tiny social noise.
-        trivial = {"ok", "okay", "thanks", "thank", "merci", "bonjour", "salut", "hello", "hi", "hey"}
-        if words and all(w in trivial for w in words):
+        # Reject action-like transient directives by default.
+        if has_transient_pattern:
             return False
+
+        # Conservative fallback: keep only self-profile statements, not generic long instructions.
+        has_self_reference = any(token in {"i", "im", "i'm", "my", "me", "je", "mon", "ma", "mes"} for token in words)
+        has_state_verb = any(
+            token in {
+                "am", "live", "work", "prefer", "like", "dislike", "hate", "use", "have",
+                "suis", "habite", "travaille", "prefere", "préfère", "aime",
+            }
+            for token in words
+        )
+        return len(words) >= 5 and has_self_reference and has_state_verb
+
+    def _is_durable_memory_candidate(self, user_message: str) -> bool:
+        # Backward-compatible internal alias.
+        return self.is_durable_message(user_message)
+
+    def _is_triplet_durable(self, subject: str, predicate: str, object_: str, source_message: str) -> bool:
+        """
+        Filter out extracted triplets that look like temporary task directives.
+        Keep only stable profile/workflow facts for long-term memory.
+        """
+        subj = (subject or "").strip().lower()
+        pred = (predicate or "").strip().lower()
+        obj = (object_ or "").strip().lower()
+        triple_text = f"{subj} {pred} {obj}".strip()
+        source = (source_message or "").strip().lower()
+        pred_words = set(re.findall(r"[a-z0-9_]+", pred))
+        subj_words = set(re.findall(r"[a-z0-9_]+", subj))
+        obj_words = set(re.findall(r"[a-z0-9_:@.\-]+", obj))
+
+        if not subj or not pred or not obj:
+            return False
+
+        if any(re.search(p, triple_text) for p in TRANSIENT_MEMORY_PATTERNS):
+            return False
+        if any(term in subj_words for term in TASKISH_SUBJECT_TERMS):
+            return False
+        if any(term in pred_words for term in TRANSIENT_PREDICATE_TERMS):
+            # Exception: "prefers ... format" can still be durable style preference.
+            if not (("prefer" in pred_words or "prefers" in pred_words) and "format" in pred_words):
+                return False
+        if any(term in obj for term in TRANSIENT_OBJECT_TERMS):
+            return False
+        if any(re.search(p, source) for p in TRANSIENT_MEMORY_PATTERNS):
+            if not any(re.search(p, source) for p in DURABLE_MEMORY_PATTERNS):
+                return False
+
+        # Explicitly keep stable contact/profile facts.
+        if EMAIL_RE.search(obj) and any(w in pred_words for w in {"email", "address", "has", "is"}):
+            return True
+        if "user" in subj_words and any(w in pred_words for w in {"communicates", "speaks", "uses", "prefers", "typically", "usually"}):
+            return True
+        if any(w in pred_words for w in DURABLE_PREDICATE_TERMS):
+            return True
         return False
+
+    def prune_transient_triplets(self) -> int:
+        """
+        Remove already-stored non-durable triplets from the user's KG.
+        Returns number of removed triplets.
+        """
+        rows = self._db.execute(
+            "SELECT id, subject, predicate, object FROM kg_triplets WHERE user_id = ?",
+            (self.user_id,),
+        ).fetchall()
+        if not rows:
+            return 0
+
+        doomed_ids: list[str] = []
+        for row in rows:
+            if not self._is_triplet_durable(
+                str(row["subject"]),
+                str(row["predicate"]),
+                str(row["object"]),
+                "",
+            ):
+                doomed_ids.append(str(row["id"]))
+
+        for tid in doomed_ids:
+            self._db.execute(
+                "DELETE FROM kg_triplets WHERE id = ? AND user_id = ?",
+                (tid, self.user_id),
+            )
+            try:
+                self._db.execute("DELETE FROM kg_vec WHERE id = ?", (tid,))
+            except Exception:
+                pass
+        self._db.commit()
+        return len(doomed_ids)
 
     async def update(self, user_message: str, assistant_response: str) -> None:
         """
@@ -484,14 +618,14 @@ class Memoria:
         except Exception:
             pass
 
-    async def consolidate(self) -> None:
+    async def consolidate(self) -> tuple[bool, str]:
         """
         Consolidate Knowledge Graph to remove redundancy and stay within limits.
         Uses LLM to merge triplets.
         """
         all_triplets = self.get_all_triplets()
         if not all_triplets:
-            return
+            return False, "no_triplets"
 
         formatted = "\n".join(
             [f"{t['subject']} | {t['predicate']} | {t['object']}" for t in all_triplets]
@@ -508,55 +642,78 @@ class Memoria:
             )
             content = result.get("content", "{}")
             parsed = json.loads(content)
-            new_triplets = parsed.get("triplets", [])
+            new_triplets = parsed.get("triplets", []) if isinstance(parsed, dict) else []
+            if not isinstance(new_triplets, list) or not new_triplets:
+                return False, "empty_model_output"
 
-            if new_triplets:
-                # 1. Clear existing
-                self._db.execute("DELETE FROM kg_triplets WHERE user_id = ?", (self.user_id,))
-                try:
-                    self._db.execute("DELETE FROM kg_vec WHERE id NOT IN (SELECT id FROM kg_triplets)")
-                except Exception:
-                    pass
-                
-                # 2. Insert consolidated ones
-                for t in new_triplets:
-                    if isinstance(t, dict) and all(k in t for k in ("subject", "predicate", "object")):
-                        triplet_id = str(uuid.uuid4())
-                        triplet_text = f"{t['subject']} {t['predicate']} {t['object']}"
-                        
-                        embedding: Optional[bytes] = None
-                        if self._embedder:
-                            embedding = self._embedder.encode(triplet_text)
+            cleaned: list[tuple[str, str, str]] = []
+            for t in new_triplets:
+                if not (isinstance(t, dict) and all(k in t for k in ("subject", "predicate", "object"))):
+                    continue
+                subj = str(t["subject"])[:200].strip()
+                pred = str(t["predicate"])[:200].strip()
+                obj = str(t["object"])[:200].strip()
+                if not (subj and pred and obj):
+                    continue
+                if not self._is_triplet_durable(subj, pred, obj, ""):
+                    continue
+                cleaned.append((subj, pred, obj))
 
+            if not cleaned:
+                return False, "no_valid_triplets"
+
+            old_set = {
+                (str(t["subject"]).strip(), str(t["predicate"]).strip(), str(t["object"]).strip())
+                for t in all_triplets
+            }
+            new_set = set(cleaned)
+            if old_set == new_set:
+                return False, "no_changes"
+
+            # 1. Clear existing
+            self._db.execute("DELETE FROM kg_triplets WHERE user_id = ?", (self.user_id,))
+            try:
+                self._db.execute("DELETE FROM kg_vec WHERE id NOT IN (SELECT id FROM kg_triplets)")
+            except Exception:
+                pass
+
+            # 2. Insert consolidated ones
+            for subj, pred, obj in cleaned:
+                triplet_id = str(uuid.uuid4())
+                triplet_text = f"{subj} {pred} {obj}"
+
+                embedding: Optional[bytes] = None
+                if self._embedder:
+                    embedding = self._embedder.encode(triplet_text)
+
+                self._db.execute(
+                    """INSERT INTO kg_triplets
+                       (id, session_id, user_id, subject, predicate, object, embedding, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        triplet_id,
+                        self.session_id,
+                        self.user_id,
+                        subj,
+                        pred,
+                        obj,
+                        embedding,
+                        datetime.utcnow().isoformat(),
+                    ),
+                )
+                if embedding:
+                    try:
                         self._db.execute(
-                            """INSERT INTO kg_triplets
-                               (id, session_id, user_id, subject, predicate, object, embedding, created_at)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                            (
-                                triplet_id,
-                                self.session_id,
-                                self.user_id,
-                                str(t["subject"])[:200],
-                                str(t["predicate"])[:200],
-                                str(t["object"])[:200],
-                                embedding,
-                                datetime.utcnow().isoformat(),
-                            ),
+                            "INSERT INTO kg_vec(id, embedding) VALUES (?, ?)",
+                            (triplet_id, embedding),
                         )
-                        if embedding:
-                            try:
-                                self._db.execute(
-                                    "INSERT INTO kg_vec(id, embedding) VALUES (?, ?)",
-                                    (triplet_id, embedding),
-                                )
-                            except Exception:
-                                pass
-                
-                self._db.commit()
-                return True
+                    except Exception:
+                        pass
+
+            self._db.commit()
+            return True, "consolidated"
         except Exception:
-            pass
-        return False
+            return False, "exception"
 
     async def _process_triplets(self, user_message: str) -> None:
         """Extract knowledge triplets from user message and save to KG."""
@@ -594,10 +751,14 @@ class Memoria:
             # Insert new triplets with local embeddings
             for t in triplets:
                 if isinstance(t, dict) and all(k in t for k in ("subject", "predicate", "object")):
+                    subj = str(t["subject"])[:200]
+                    pred = str(t["predicate"])[:200]
+                    obj = str(t["object"])[:200]
+                    if not self._is_triplet_durable(subj, pred, obj, user_message):
+                        continue
+
                     triplet_id = str(uuid.uuid4())
-                    triplet_text = (
-                        f"{t['subject']} {t['predicate']} {t['object']}"
-                    )
+                    triplet_text = f"{subj} {pred} {obj}"
 
                     # Generate local embedding (None if deps unavailable)
                     embedding: Optional[bytes] = None
@@ -612,9 +773,9 @@ class Memoria:
                             triplet_id,
                             self.session_id,
                             self.user_id,
-                            str(t["subject"])[:200],
-                            str(t["predicate"])[:200],
-                            str(t["object"])[:200],
+                            subj,
+                            pred,
+                            obj,
                             embedding,
                             datetime.utcnow().isoformat(),
                         ),

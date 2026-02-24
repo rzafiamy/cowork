@@ -5,6 +5,7 @@ Implementations for SMTP, Telegram, Slack, and X (Twitter).
 
 import mimetypes
 import os
+import re
 import smtplib
 from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
@@ -16,6 +17,87 @@ from .utils import _env, _missing_key, _http_post
 
 
 # ── Attachment helper ─────────────────────────────────────────────────────────
+
+_EMAIL_RE = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$", re.IGNORECASE)
+_SLACK_CHANNEL_RE = re.compile(r"^(#[a-z0-9._\-]+|[CGD][A-Z0-9]{8,})$", re.IGNORECASE)
+_TELEGRAM_CHAT_RE = re.compile(r"^(@[A-Za-z0-9_]{5,}|-?[0-9]{5,})$")
+_PLACEHOLDER_TOKENS = (
+    "example.com",
+    "example.org",
+    "test.com",
+    "your-email",
+    "recipient@email.com",
+    "foo@bar",
+    "john@doe",
+)
+
+
+def _has_placeholder(value: str) -> bool:
+    v = (value or "").strip().lower()
+    return any(tok in v for tok in _PLACEHOLDER_TOKENS)
+
+
+def _require_non_empty(field: str, value: str) -> str | None:
+    if not str(value or "").strip():
+        return (
+            f"❌ Missing `{field}`.\n"
+            "Please ask the user for an explicit value before sending."
+        )
+    return None
+
+
+def _validate_email_recipient(recipient: str) -> str | None:
+    maybe_missing = _require_non_empty("recipient", recipient)
+    if maybe_missing:
+        return maybe_missing
+    r = recipient.strip()
+    if _has_placeholder(r):
+        return (
+            "❌ Recipient email looks like a placeholder.\n"
+            "Please ask the user to confirm the exact recipient address."
+        )
+    if not _EMAIL_RE.match(r):
+        return (
+            f"❌ Invalid recipient email format: `{recipient}`.\n"
+            "Please ask the user for a valid email address."
+        )
+    return None
+
+
+def _validate_slack_channel(channel: str) -> str | None:
+    maybe_missing = _require_non_empty("channel", channel)
+    if maybe_missing:
+        return maybe_missing
+    c = channel.strip()
+    if _has_placeholder(c):
+        return (
+            "❌ Slack channel looks like a placeholder.\n"
+            "Please ask the user to confirm the exact channel name or ID."
+        )
+    if not _SLACK_CHANNEL_RE.match(c):
+        return (
+            f"❌ Invalid Slack channel format: `{channel}`.\n"
+            "Use `#channel-name` or channel ID (`C...`, `G...`, `D...`). Ask the user to confirm."
+        )
+    return None
+
+
+def _validate_telegram_chat_id(chat_id: str) -> str | None:
+    maybe_missing = _require_non_empty("chat_id", chat_id)
+    if maybe_missing:
+        return maybe_missing
+    c = chat_id.strip()
+    if _has_placeholder(c):
+        return (
+            "❌ Telegram chat_id looks like a placeholder.\n"
+            "Please ask the user to confirm the exact `@username` or numeric chat ID."
+        )
+    if not _TELEGRAM_CHAT_RE.match(c):
+        return (
+            f"❌ Invalid Telegram chat_id format: `{chat_id}`.\n"
+            "Expected `@username` or numeric ID. Ask the user to confirm."
+        )
+    return None
 
 def _attach_files(msg: MIMEMultipart, attachments: list[str]) -> list[str]:
     """
@@ -67,6 +149,10 @@ def smtp_send_email(
     html: bool = False,
 ) -> str:
     """Send an email via SMTP, with optional file attachments."""
+    err = _validate_email_recipient(recipient)
+    if err:
+        return err
+
     host = _env("SMTP_HOST")
     user = _env("SMTP_USER")
     password = _env("SMTP_PASS")
@@ -110,6 +196,12 @@ def smtp_send_email(
 
 def telegram_send_message(chat_id: str, text: str) -> str:
     """Send a message via Telegram Bot API."""
+    err = _validate_telegram_chat_id(chat_id)
+    if err:
+        return err
+    if not str(text or "").strip():
+        return "❌ Missing Telegram message text. Please ask the user for message content."
+
     token = _env("TELEGRAM_BOT_TOKEN")
     if not token: return _missing_key("telegram_send_message", "TELEGRAM_BOT_TOKEN")
 
@@ -124,6 +216,12 @@ def telegram_send_message(chat_id: str, text: str) -> str:
 
 def slack_send_message(channel: str, text: str) -> str:
     """Send a message to a Slack channel."""
+    err = _validate_slack_channel(channel)
+    if err:
+        return err
+    if not str(text or "").strip():
+        return "❌ Missing Slack message text. Please ask the user for message content."
+
     token = _env("SLACK_BOT_TOKEN")
     if not token: return _missing_key("slack_send_message", "SLACK_BOT_TOKEN")
 
@@ -139,6 +237,15 @@ def slack_send_message(channel: str, text: str) -> str:
 
 def twitter_post_tweet(text: str) -> str:
     """Post a tweet to X (Twitter)."""
+    t = str(text or "").strip()
+    if not t:
+        return "❌ Missing tweet text. Please ask the user for message content."
+    if len(t) > 280:
+        return (
+            f"❌ Tweet text is too long ({len(t)} chars > 280).\n"
+            "Please ask the user to shorten it."
+        )
+
     token = _env("TWITTER_BEARER_TOKEN")
     if not token: return _missing_key("twitter_post_tweet", "TWITTER_BEARER_TOKEN")
 

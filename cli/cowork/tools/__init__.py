@@ -132,6 +132,7 @@ from .manager import (
     get_tools_for_categories,
     get_available_tools_for_categories,
     get_all_available_tools,
+    get_category_descriptions,
     ExecutionGateway,
     ToolExecutor
 )

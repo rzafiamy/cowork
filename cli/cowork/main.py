@@ -937,6 +937,13 @@ async def handle_command(
             if click.confirm("Are you sure you want to clear ALL persona and session memory?", default=False):
                 memoria.clear_all()
                 render_success("🧹 Memory wiped clean.")
+        elif sub == "prune":
+            with ThinkingSpinner("Pruning non-durable memory facts"):
+                removed = memoria.prune_transient_triplets()
+            if removed > 0:
+                render_success(f"🧹 Pruned {removed} non-durable memory fact(s).")
+            else:
+                render_success("🧠 No non-durable memory facts found.")
         elif sub == "summarize":
             # Just show the summary in a dedicated panel
             from .ui import render_memory_dashboard
@@ -944,14 +951,21 @@ async def handle_command(
         elif sub in ("compress", "consolidate"):
             with ThinkingSpinner("Consolidating knowledge graph"):
                 # Run the async consolidation in the event loop
-                success = await memoria.consolidate()
+                success, reason = await memoria.consolidate()
             if success:
                 render_success("🧠 Memory consolidated & redundancy removed.")
                 # Show updated status
                 from .ui import render_memory_dashboard
                 render_memory_dashboard(memoria.get_summary(), memoria.get_all_triplets(), memoria.kg_limit)
             else:
-                render_error("Memory consolidation failed or no changes needed.")
+                reason_map = {
+                    "no_triplets": "No memory facts to consolidate yet.",
+                    "no_changes": "Memory already consolidated (no changes needed).",
+                    "empty_model_output": "Consolidation model returned no triplets.",
+                    "no_valid_triplets": "Consolidation returned invalid triplets.",
+                    "exception": "Consolidation failed due to an internal error.",
+                }
+                render_error(reason_map.get(reason, f"Memory consolidation failed ({reason})."))
         else:
             from .ui import render_memory_dashboard
             render_memory_dashboard(memoria.get_summary(), memoria.get_all_triplets(), memoria.kg_limit)

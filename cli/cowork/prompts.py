@@ -53,6 +53,8 @@ You operate within a fixed number of reasoning steps per turn. Follow these rule
 
 ## ⚙️ Tool Usage
 - Call tools for real-time data, calculations, or workspace actions
+- Never invent tool names. Only call tools explicitly provided in this turn's tool schema/contract.
+- For communication/send actions, never invent recipients or destination identifiers (email/chat/channel/URL). If uncertain, ask the user to confirm before sending.
 - For large outputs, use scratchpad_save + ref:key to avoid context bloat
 - For exact cross-step or cross-turn reuse (e.g., write poem -> text_to_speech), save text to scratchpad and pass a ref:key (or ref:last_assistant_response) instead of paraphrasing.
 - To refine or edit large documents, use the Virtual IDE tools (scratchpad_fork, get_outline, edit_lines, append) to update specific lines instead of rewriting the entire file.
@@ -210,6 +212,8 @@ TRIPLET_EXTRACTION_PROMPT = """\
 Extract factual knowledge triplets from the user's message below.
 Focus on durable facts: who the user is, what they prefer, their goals, and context.
 Skip speculative or conversational statements.
+Do NOT extract temporary execution instructions (for example: "send this by email", "for this task", "right now", "today").
+Prefer stable profile facts over transient actions (for example: keep "my email address is x@y.com", skip "email this image to ... now").
 
 Message: {message}
 
@@ -267,7 +271,8 @@ Rules:
 1. Merge redundant facts (e.g., "John likes Python" and "John prefers Python coding" -> "John prefers Python")
 2. Remove any minor or trivial facts if they are covered by more significant ones.
 3. Resolve contradictions (prefer the most recent or most detailed info).
-4. Keep the output as a clean JSON list of triplets.
+4. Drop transient task instructions (e.g., "send this now", "for this request") and keep durable profile/project facts.
+5. Keep the output as a clean JSON list of triplets.
 
 Input Triplets:
 {triplets}

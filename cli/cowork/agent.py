@@ -21,6 +21,7 @@ from .prompts import AGENT_CHAT_SYSTEM_PROMPT, AGENT_SYSTEM_PROMPT, COMPRESS_PRO
 from .memoria import Memoria
 from .issues import IssueManager
 from .router import MetaRouter
+from .skills import ActiveSkillContext, SkillRuntime
 from .theme import (
     GATEWAY_ERROR_PREFIX,
     OP_DEFAULTS,
@@ -278,6 +279,7 @@ class GeneralPurposeAgent:
         self.gateway = ExecutionGateway(scratchpad)
         self.executor = ToolExecutor(scratchpad, config, status_callback=self.status_cb)
         self.firewall = FirewallManager()
+        self.skill_runtime = SkillRuntime(config)
 
     def _strip_nonlimit_status_banner(self, text: str) -> str:
         """
@@ -298,34 +300,9 @@ class GeneralPurposeAgent:
     def _should_persist_memory(self, user_input: str) -> bool:
         """
         Persist only durable preference/profile/project-state messages.
+        Delegate to Memoria so read/write paths share the same memory policy.
         """
-        text = user_input.strip()
-        if not text:
-            return False
-        if text.startswith("/"):
-            return False
-
-        lowered = text.lower()
-        durable_patterns = [
-            # English
-            r"\bi am\b", r"\bmy name is\b", r"\bi live in\b", r"\bi work as\b",
-            r"\bi prefer\b", r"\bi like\b", r"\bi dislike\b", r"\balways\b", r"\bnever\b",
-            r"\bmy goal is\b", r"\bi'm working on\b", r"\bwe are building\b",
-            r"\bremember\b", r"\bsave this\b", r"\bfor future\b", r"\bimportant\b", r"\bnote this\b",
-            # French
-            r"\bje suis\b", r"\bmon nom est\b", r"\bj'habite\b", r"\bje travaille\b",
-            r"\bje prefere\b", r"\bje préfère\b", r"\bj'aime\b", r"\bje n'aime pas\b",
-            r"\bmon objectif\b", r"\bje travaille sur\b", r"\bnous construisons\b",
-            r"\brappelle\b", r"\bsauvegarde\b", r"\benregistre\b", r"\bpour plus tard\b",
-        ]
-        if any(re.search(p, lowered) for p in durable_patterns):
-            return True
-
-        # Fallback: persist substantive user turns by default so memory is not too restrictive.
-        words = re.findall(r"[a-zA-Z0-9_]+", lowered)
-        if len(words) >= 6:
-            return True
-        return False
+        return self.memoria.is_durable_message(user_input)
 
     def _make_meaningful_ref_key(self, user_input: str) -> str:
         """
@@ -525,6 +502,39 @@ class GeneralPurposeAgent:
             )
         return "\n".join(lines)[:1800]
 
+    def _build_tool_contract_message(self, tools_schema: list[dict[str, Any]]) -> str:
+        """
+        Inject explicit allowed tool contract to reduce tool-call hallucinations.
+        """
+        if not tools_schema:
+            return "[TOOL CONTRACT]\nNo tool calls are allowed in this turn."
+
+        lines = [
+            "[TOOL CONTRACT]",
+            "You may call ONLY these exact tool names. Never invent or alias tool names.",
+        ]
+        for tool in tools_schema:
+            fn = tool.get("function", {})
+            name = str(fn.get("name", "")).strip()
+            if not name:
+                continue
+            params = fn.get("parameters", {}) or {}
+            required = params.get("required", []) if isinstance(params, dict) else []
+            req_txt = ", ".join(str(r) for r in required) if required else "(none)"
+            lines.append(f"- {name} | required: {req_txt}")
+        lines.append("If no listed tool fits, ask for clarification or answer without tools.")
+        return "\n".join(lines)
+
+    def _explicit_multimodal_request(self, user_input: str) -> bool:
+        text = (user_input or "").lower()
+        triggers = [
+            "generate image", "generate an image", "create image", "create an image", "make an image", "draw", "dall-e", "stable diffusion",
+            "vision", "describe image", "analyze image", "ocr",
+            "text to speech", "tts", "speech to text", "stt", "transcribe", "audio",
+            "générer image", "créer image", "dessiner", "synthèse vocale",
+        ]
+        return any(t in text for t in triggers)
+
     # ── Input Gatekeeper ──────────────────────────────────────────────────────
 
     def _gatekeeper(self, user_input: str, session: Session) -> str:
@@ -606,6 +616,17 @@ class GeneralPurposeAgent:
             display = self.router.get_category_display(categories)
             self.status_cb(f"🎯  Routed to: {display} (confidence: {routing_info['confidence']:.0%})")
 
+        # ── Skill Runtime Activation (Progressive Disclosure) ─────────────────
+        active_skill: ActiveSkillContext = self.skill_runtime.activate(processed_input, categories)
+        categories = self.skill_runtime.merge_categories(categories, active_skill)
+        if active_skill.skill:
+            if active_skill.enabled:
+                self.status_cb(
+                    f"🧩  Skill activated: {active_skill.skill.name} (tier {active_skill.trust.tier}, score {active_skill.score:.2f})"
+                )
+            else:
+                self.status_cb(f"🧩  Skill blocked by trust gates: {active_skill.skill.name}")
+
         # ── Always include SESSION_SCRATCHPAD so task_goal tools are always available ──
         if (
             "CONVERSATIONAL_ONLY" not in categories
@@ -617,6 +638,16 @@ class GeneralPurposeAgent:
 
         trace.add_step("routing", routing_info)
         self.trace_cb("router_response", routing_info)
+        self.trace_cb(
+            "skill_routing",
+            {
+                "active_skill": active_skill.skill.name if active_skill.skill else "",
+                "score": active_skill.score,
+                "enabled": active_skill.enabled,
+                "trust_tier": active_skill.trust.tier if active_skill.trust else None,
+                "failed_gates": active_skill.trust.failed_gates if active_skill.trust else [],
+            },
+        )
         trace.categories = categories
         job.categories = categories
 
@@ -627,13 +658,21 @@ class GeneralPurposeAgent:
         self.trace_cb("memory_context", {"memory_context": memory_context, "skipped": False})
 
         # ── Build Tool Schema (Filters out unconfigured paid tools) ───────────
-        tools_schema = [] if "CONVERSATIONAL_ONLY" in categories else get_available_tools_for_categories(categories)
+        tools_schema_raw = [] if "CONVERSATIONAL_ONLY" in categories else get_available_tools_for_categories(categories)
+        tools_schema = self.skill_runtime.filter_tools(tools_schema_raw, active_skill)
+        skill_filtered_empty = bool(active_skill.enabled and tools_schema_raw and not tools_schema)
+        if skill_filtered_empty:
+            # Coherence safeguard: avoid empty-tool dead-ends caused by overly strict skill manifests.
+            self.status_cb("⚠️  Skill constraints removed all tools — falling back to routed tool set.")
+            tools_schema = tools_schema_raw
         self.trace_cb(
             "tools_schema_selected",
             {
                 "categories": categories,
                 "tool_names": [t["function"]["name"] for t in tools_schema],
                 "tools_schema": tools_schema,
+                "tools_schema_raw": tools_schema_raw,
+                "skill_filtered_empty_fallback": skill_filtered_empty,
                 "bypass_tool_schema": "CONVERSATIONAL_ONLY" in categories,
             },
         )
@@ -642,6 +681,10 @@ class GeneralPurposeAgent:
             premium_tools = [t["function"]["name"] for t in tools_schema if t["category"] in categories and t["category"] != "CONVERSATIONAL"]
             if premium_tools:
                 self.status_cb(f"🔌 Enabled {len(premium_tools)} tool(s) for this task.")
+        allowed_tool_names = {str(t.get("function", {}).get("name", "")) for t in tools_schema}
+        allowed_tool_names.discard("")
+        multimodal_tool_names = {"image_generate", "speech_to_text", "text_to_speech", "vision_analyze"}
+        multimodal_allowed = self._explicit_multimodal_request(processed_input)
 
         # ── Build System Prompt ───────────────────────────────────────────────
         current_dt = dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %z")
@@ -664,8 +707,22 @@ class GeneralPurposeAgent:
 
         # ── Build Messages ────────────────────────────────────────────────────
         chat_history = session.get_chat_messages()
+        skill_toc = self.skill_runtime.build_metadata_toc()
+        skill_context = self.skill_runtime.build_context_message(active_skill)
+        tool_contract = self._build_tool_contract_message(tools_schema)
+        skill_meta_msg = {
+            "role": "system",
+            "content": (
+                "[SKILL LIBRARY METADATA]\n"
+                "Use this as a table of contents. Load full instructions only when a skill is active.\n"
+                f"{skill_toc}"
+            ),
+        }
         messages: list[dict] = [
             {"role": "system", "content": system_prompt},
+            skill_meta_msg,
+            *([{"role": "system", "content": skill_context}] if skill_context else []),
+            {"role": "system", "content": tool_contract},
             *chat_history,
             {"role": "user", "content": processed_input},
         ]
@@ -682,6 +739,7 @@ class GeneralPurposeAgent:
         self.status_cb("🤖  Phase 3 · REACT Execution Loop...")
         final_response = ""
         step_ledger: list[dict[str, Any]] = []
+        disallowed_tool_attempts = 0
 
         last_tool_hash = None
         repeat_count = 0
@@ -784,6 +842,27 @@ class GeneralPurposeAgent:
 
             # ── Tool Execution ────────────────────────────────────────────────
             if tool_calls and total_tool_calls < max_tool_calls:
+                if not allowed_tool_names:
+                    disallowed_tool_attempts += 1
+                    self.trace_cb(
+                        "tool_calls_blocked_no_schema",
+                        {"step": step + 1, "tool_calls": tool_calls, "attempt": disallowed_tool_attempts},
+                    )
+                    messages.append({
+                        "role": "system",
+                        "content": (
+                            "[SYSTEM NOTICE] Tool calls were requested but no tools are allowed this turn. "
+                            "Do not call tools. Provide a direct answer or ask a clarification question."
+                        ),
+                    })
+                    if disallowed_tool_attempts >= 2:
+                        final_response = (
+                            "I could not execute tool calls for this request because no tools were allowed by policy. "
+                            "Please rephrase the request or enable the required tool category."
+                        )
+                        break
+                    continue
+
                 # ── Loop Detection ──
                 try:
                     current_hash = hash(json.dumps(tool_calls, sort_keys=True))
@@ -816,6 +895,7 @@ class GeneralPurposeAgent:
 
                 # Execute tools (parallelized)
                 async def _exec_one(tc: dict) -> dict:
+                    nonlocal disallowed_tool_attempts
                     name = tc["function"]["name"]
                     raw_args = tc["function"].get("arguments", {})
                     self.trace_cb("tool_call_received", {"step": step + 1, "name": name, "raw_args": raw_args, "tool_call": tc})
@@ -829,6 +909,39 @@ class GeneralPurposeAgent:
                                 "name": name,
                                 "content": f"{GATEWAY_ERROR_PREFIX} Invalid JSON arguments. [HINT]: Correct the JSON syntax.",
                             }
+
+                    if name not in allowed_tool_names:
+                        disallowed_tool_attempts += 1
+                        allowed_preview = ", ".join(sorted(allowed_tool_names)[:12]) or "(none)"
+                        blocked_msg = (
+                            f"{GATEWAY_ERROR_PREFIX} Tool '{name}' is not allowed for this turn. "
+                            f"[HINT]: Use one of: {allowed_preview}"
+                        )
+                        if disallowed_tool_attempts >= 2:
+                            messages.append({
+                                "role": "system",
+                                "content": (
+                                    "[SYSTEM NOTICE] You are repeatedly requesting disallowed tools. "
+                                    "Stop calling tools not in the contract and answer using allowed tools only."
+                                ),
+                            })
+                        return {
+                            "tool_call_id": tc["id"],
+                            "role": "tool",
+                            "name": name,
+                            "content": blocked_msg,
+                        }
+
+                    if name in multimodal_tool_names and not multimodal_allowed:
+                        return {
+                            "tool_call_id": tc["id"],
+                            "role": "tool",
+                            "name": name,
+                            "content": (
+                                f"{GATEWAY_ERROR_PREFIX} Multimodal tool '{name}' blocked for this request. "
+                                "[HINT]: Use multimodal tools only when user explicitly asks for image/audio/vision tasks."
+                            ),
+                        }
 
                     ok, resolved_args, err = self.gateway.validate_and_resolve(name, raw_args)
                     self.trace_cb(
