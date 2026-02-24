@@ -10,7 +10,7 @@ import struct
 import uuid
 import math
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional, List, Dict
 
 from .config import CONFIG_DIR
@@ -102,7 +102,7 @@ class IssueManager:
                 str(reason)[:500],
                 str(solution)[:1000],
                 embedding,
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
             ),
         )
 
@@ -221,3 +221,13 @@ class IssueManager:
             except Exception:
                 pass
         self._db.commit()
+
+    def migrate_user_data(self, from_user_id: str) -> int:
+        """Migrate all issue triplets from one user_id to another."""
+        cursor = self._db.execute(
+            "UPDATE issue_triplets SET user_id = ? WHERE user_id = ?",
+            (self.user_id, from_user_id)
+        )
+        count = cursor.rowcount
+        self._db.commit()
+        return count

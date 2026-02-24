@@ -36,10 +36,13 @@ class RecordIssueSolutionTool(BaseTool):
         if not self.config:
             return "❌ No configuration available."
             
-        # Get user_id from config or fallback
-        user_id = self.config.get("user_id", "default_user")
+        # Get user_id from config or fallback. 
+        # CLI/Agent uses 'memory_user_id' for persistence.
+        user_id = self.config.get("memory_user_id") or self.config.get("user_id", "default_user")
         
-        manager = IssueManager(user_id=user_id, config=self.config)
-        triplet_id = manager.add_issue(issue, reason, solution)
-        
-        return f"✅ Issue recorded successfully. Future errors matching this issue will provide this solution as a hint. (ID: {triplet_id})"
+        try:
+            manager = IssueManager(user_id=user_id, config=self.config)
+            triplet_id = manager.add_issue(issue, reason, solution)
+            return f"✅ Issue recorded successfully. Future errors matching this issue will provide this solution as a hint. (ID: {triplet_id})"
+        except Exception as e:
+            return f"❌ Failed to record issue: {e}"
