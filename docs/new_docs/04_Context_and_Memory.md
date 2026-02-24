@@ -7,13 +7,31 @@ When a conversation grows beyond the sliding window buffer (default 6,000 tokens
 * **Map Phase**: The conversation history is chunked and summarized by a highly deterministic model.
 * **Reduce Phase**: These summaries are combined into a dense `[CONVERSATION SUMMARY]` block.
 * The original, full-text context is automatically archived to the Scratchpad, making it retrievable if needed without taking up context window space.
+* Existing `[CONVERSATION SUMMARY]` blocks are excluded from future compression inputs to prevent summary-of-summary drift.
 
 ## Long-Term Memory (Memoria)
 Memoria provides the agent with "Personality" and "Past".
 * **Triplet Extraction:** Facts are extracted as Subject-Predicate-Object triplets (e.g. `(User, prefers, Python)`).
+* **Durability Gate:** Memory updates are skipped for non-durable turns (commands/chitchat/transient directives).
 * **Local Vector Search:** Embeds the triplets with `all-MiniLM-L6-v2` and searches via local SQLite (`sqlite-vec`).
 * **Temporal Decay:** Memoria uses Exponential Weighted Average (EWA) decay. A memory's relevance score is the product of its semantic similarity and an exponential time decay factor.
+* **Relevance Gates:** Retrieval requires semantic and/or topical overlap (`memory_min_similarity`, `memory_topic_overlap_min`, `memory_high_similarity_bypass`).
+* **Low-Signal Fallback:** If strict retrieval returns nothing, recent triplets are injected with conservative weighting to preserve continuity.
 * **Knowledge Consolidation:** When triplets exceed a configurable limit (`memory_kg_limit_triplets`, default 100), the system automatically triggers an LLM-led consolidation turn to merge redundant facts into more concise ones.
+* **Transient Pruning:** Existing non-durable facts can be removed with `cowork memory prune`.
+
+```mermaid
+flowchart TD
+    U[User turn] --> D{Durable message?}
+    D -- No --> Skip[Skip memory update]
+    D -- Yes --> E[Extract triplets]
+    E --> F{Durable triplet?}
+    F -- No --> Drop[Discard triplet]
+    F -- Yes --> V[Store in memoria.db + vectors]
+    V --> C{"Triplet count > limit?"}
+    C -- Yes --> K[Run consolidation]
+    C -- No --> Done[Ready for retrieval]
+```
 
 ### Memoria Lifecycle Summary
 

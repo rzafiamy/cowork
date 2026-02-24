@@ -40,18 +40,16 @@ class WorkspaceWriteTool(BaseTool):
     def _get_workspace_session(self) -> Optional[WorkspaceSession]:
         if not self.scratchpad:
             return None
-        session_id = self.scratchpad.session_id
-        for info in workspace_manager.list_all():
-            if info["session_id"] == session_id:
-                return WorkspaceSession.load(info["slug"])
-        return None
+        return workspace_manager.get_by_session_id(self.scratchpad.session_id)
 
     def execute(self, filename: str, content: str) -> str:
         safe_filename = Path(filename).name
         self._emit(f"📁 Writing workspace artifact: '{safe_filename}'...")
         ws = self._get_workspace_session()
         if not ws:
-            path = WORKSPACE_ROOT / safe_filename
+            fallback_dir = WORKSPACE_ROOT / "artifacts"
+            fallback_dir.mkdir(parents=True, exist_ok=True)
+            path = fallback_dir / safe_filename
             path.write_text(content, encoding="utf-8")
             return f"✅ Written to workspace: {path}\n• Size: {len(content)} chars"
         path = ws.write_artifact(safe_filename, content)
@@ -91,11 +89,7 @@ class WorkspaceReadTool(BaseTool):
     def _get_workspace_session(self) -> Optional[WorkspaceSession]:
         if not self.scratchpad:
             return None
-        session_id = self.scratchpad.session_id
-        for info in workspace_manager.list_all():
-            if info["session_id"] == session_id:
-                return WorkspaceSession.load(info["slug"])
-        return None
+        return workspace_manager.get_by_session_id(self.scratchpad.session_id)
 
     def execute(self, filename: str) -> str:
         self._emit(f"📖 Reading workspace file: '{filename}'...")
@@ -141,11 +135,7 @@ class WorkspaceListTool(BaseTool):
     def _get_workspace_session(self) -> Optional[WorkspaceSession]:
         if not self.scratchpad:
             return None
-        session_id = self.scratchpad.session_id
-        for info in workspace_manager.list_all():
-            if info["session_id"] == session_id:
-                return WorkspaceSession.load(info["slug"])
-        return None
+        return workspace_manager.get_by_session_id(self.scratchpad.session_id)
 
     def execute(self) -> str:
         self._emit("📋 Listing workspace session files...")
@@ -216,11 +206,7 @@ class WorkspaceNoteTool(BaseTool):
     def _get_workspace_session(self) -> Optional[WorkspaceSession]:
         if not self.scratchpad:
             return None
-        session_id = self.scratchpad.session_id
-        for info in workspace_manager.list_all():
-            if info["session_id"] == session_id:
-                return WorkspaceSession.load(info["slug"])
-        return None
+        return workspace_manager.get_by_session_id(self.scratchpad.session_id)
 
     def execute(self, title: str, content: str, category: str = "General") -> str:
         self._emit(f"📝 Saving workspace note: '{title}'...")
@@ -266,11 +252,7 @@ class WorkspaceContextUpdateTool(BaseTool):
     def _get_workspace_session(self) -> Optional[WorkspaceSession]:
         if not self.scratchpad:
             return None
-        session_id = self.scratchpad.session_id
-        for info in workspace_manager.list_all():
-            if info["session_id"] == session_id:
-                return WorkspaceSession.load(info["slug"])
-        return None
+        return workspace_manager.get_by_session_id(self.scratchpad.session_id)
 
     def execute(self, content: str, replace: bool = False) -> str:
         self._emit("✏️  Updating session context.md...")

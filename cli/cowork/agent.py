@@ -190,19 +190,16 @@ class ContextCompressor:
 
         # Reduce phase: combine summaries
         combined = "\n\n".join(summaries)
-        summary_message = {
-            "role": "system",
-            "content": (
-                f"[CONVERSATION SUMMARY]\n"
-                f"{f'Source archived at {source_ref}\\n' if source_ref else ''}"
-                f"{combined}"
-            ),
-        }
+        summary_content = (
+            f"[CONVERSATION SUMMARY]\n"
+            f"{f'Source archived at {source_ref}\\n' if source_ref else ''}"
+            f"{combined}"
+        )
 
-        # ALWAYS keep original system prompt at index 0 if it was role: system
-        system_msg = messages[0] if messages and messages[0].get("role") == "system" else {"role": "system", "content": system_prompt}
-
-        return [system_msg, summary_message] + protected
+        # 1. Maintain consistent system prompt structure
+        # Combine base system_prompt and the new summary into ONE system message.
+        consolidated_content = f"{system_prompt}\n\n{summary_content}"
+        return [{"role": "system", "content": consolidated_content}] + protected
 
 
 # ─── Agent Trace ─────────────────────────────────────────────────────────────
@@ -510,8 +507,8 @@ class GeneralPurposeAgent:
             return "[TOOL CONTRACT]\nNo tool calls are allowed in this turn."
 
         lines = [
-            "[TOOL CONTRACT]",
-            "You may call ONLY these exact tool names. Never invent or alias tool names.",
+            "### 📜 Tool Usage Contract",
+            "You may call **ONLY** these exact tool names. Never invent or alias tool names.",
         ]
         for tool in tools_schema:
             fn = tool.get("function", {})
@@ -520,20 +517,17 @@ class GeneralPurposeAgent:
                 continue
             params = fn.get("parameters", {}) or {}
             required = params.get("required", []) if isinstance(params, dict) else []
-            req_txt = ", ".join(str(r) for r in required) if required else "(none)"
-            lines.append(f"- {name} | required: {req_txt}")
-        lines.append("If no listed tool fits, ask for clarification or answer without tools.")
+            req_txt = ", ".join(f"`{r}`" for r in required) if required else "_none_"
+            lines.append(f"- **{name}**: requires {req_txt}")
+        lines.append("\nIf no listed tool fits the current need, ask the user for clarification or answer without tools.")
         return "\n".join(lines)
 
-    def _explicit_multimodal_request(self, user_input: str) -> bool:
-        text = (user_input or "").lower()
-        triggers = [
-            "generate image", "generate an image", "create image", "create an image", "make an image", "draw", "dall-e", "stable diffusion",
-            "vision", "describe image", "analyze image", "ocr",
-            "text to speech", "tts", "speech to text", "stt", "transcribe", "audio",
-            "générer image", "créer image", "dessiner", "synthèse vocale",
-        ]
-        return any(t in text for t in triggers)
+    def _looks_like_goal_status(self, text: str) -> bool:
+        head = (text or "").strip().splitlines()
+        if not head:
+            return False
+        first = head[0].strip()
+        return bool(re.match(r"^[✅⚠️❌]\s+GOAL\s+(ACHIEVED|PARTIALLY ACHIEVED|NOT ACHIEVED)\s*$", first))
 
     # ── Input Gatekeeper ──────────────────────────────────────────────────────
 
@@ -684,10 +678,15 @@ class GeneralPurposeAgent:
         allowed_tool_names = {str(t.get("function", {}).get("name", "")) for t in tools_schema}
         allowed_tool_names.discard("")
         multimodal_tool_names = {"image_generate", "speech_to_text", "text_to_speech", "vision_analyze"}
-        multimodal_allowed = self._explicit_multimodal_request(processed_input)
+        multimodal_allowed = ("MULTIMODAL_TOOLS" in categories) or ("ALL_TOOLS" in categories)
 
         # ── Build System Prompt ───────────────────────────────────────────────
         current_dt = dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %z")
+        # ── Build Consolidated System Prompt ──────────────────────────────────
+        skill_toc = self.skill_runtime.build_metadata_toc()
+        skill_context = self.skill_runtime.build_context_message(active_skill) or "(No specific skill active)"
+        tool_contract = self._build_tool_contract_message(tools_schema)
+
         if "CONVERSATIONAL_ONLY" in categories:
             system_prompt = AGENT_CHAT_SYSTEM_PROMPT.format(
                 current_datetime=current_dt,
@@ -703,26 +702,15 @@ class GeneralPurposeAgent:
                 session_id=session.session_id[:8],
                 message_count=len(session.messages),
                 scratchpad_index=scratchpad_index,
+                skill_context=skill_context,
+                skill_toc=skill_toc,
+                tool_contract=tool_contract,
             )
 
-        # ── Build Messages ────────────────────────────────────────────────────
+        # ── Build Message List ────────────────────────────────────────────────
         chat_history = session.get_chat_messages()
-        skill_toc = self.skill_runtime.build_metadata_toc()
-        skill_context = self.skill_runtime.build_context_message(active_skill)
-        tool_contract = self._build_tool_contract_message(tools_schema)
-        skill_meta_msg = {
-            "role": "system",
-            "content": (
-                "[SKILL LIBRARY METADATA]\n"
-                "Use this as a table of contents. Load full instructions only when a skill is active.\n"
-                f"{skill_toc}"
-            ),
-        }
         messages: list[dict] = [
             {"role": "system", "content": system_prompt},
-            skill_meta_msg,
-            *([{"role": "system", "content": skill_context}] if skill_context else []),
-            {"role": "system", "content": tool_contract},
             *chat_history,
             {"role": "user", "content": processed_input},
         ]
@@ -740,6 +728,7 @@ class GeneralPurposeAgent:
         final_response = ""
         step_ledger: list[dict[str, Any]] = []
         disallowed_tool_attempts = 0
+        step_limit_reached = False
 
         last_tool_hash = None
         repeat_count = 0
@@ -1049,6 +1038,7 @@ class GeneralPurposeAgent:
 
         # ── Step-limit recovery ───────────────────────────────────────────────
         if not final_response:
+            step_limit_reached = True
             self.status_cb(f"⏱️  Step limit ({max_steps}) reached — requesting self-assessment...")
             trace.add_step("step_limit_reached", {"max_steps": max_steps, "total_tool_calls": total_tool_calls})
             try:
@@ -1093,6 +1083,9 @@ class GeneralPurposeAgent:
         job.steps = len([s for s in trace.steps if s["type"] == "react_step_start"])
         job.tool_calls = trace.total_tool_calls
         job.tool_calls_list = getattr(trace, "all_tool_calls_executed", [])
+        job.step_limit_reached = step_limit_reached
+        job.routed_categories = list(categories)
+        job.goal_status_banner = self._looks_like_goal_status(final_response)
 
         # ── Phase 5: Memory Update ───────────────────────────────────────────
         persist_memory = self._should_persist_memory(user_input)

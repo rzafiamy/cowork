@@ -20,7 +20,7 @@ Each user message is processed end-to-end through a 5-phase pipeline:
 | Phase | Component | Description |
 |-------|-----------|-------------|
 | 🛡️ Phase 1 | **Input Gatekeeper** | Token estimation; large inputs automatically offloaded to scratchpad |
-| 🧠 Phase 2 | **Meta-Router** | Intent classification at T=0.0 + tool-need calibration (`CONVERSATIONAL_ONLY` when tools are unlikely) |
+| 🧠 Phase 2 | **Meta-Router + Skill Runtime** | Intent classification at T=0.0, then progressive skill activation/trust gating + tool schema calibration |
 | 🤖 Phase 3 | **REACT Loop** | Iterative Reason → Act → Observe with parallel tool execution |
 | 🗜️ Phase 4 | **Context Compressor** | Map-Reduce history summarisation at T=0.1 when token budget is tight |
 | 🚀 Phase 5 | **Memory Ingestion** | Selective Memoria update for durable profile/preferences/project-state facts |
@@ -33,6 +33,22 @@ The REACT loop runs for up to `max_steps` (default: 15) iterations. At the limit
 2. **Structured status** — response uses `✅ GOAL ACHIEVED`, `⚠️ GOAL PARTIALLY ACHIEVED`, or `❌ GOAL NOT ACHIEVED` only for step-limit self-assessment turns
 3. **Continuation handoff** — the agent tells the user exactly what to say to continue in the next turn
 4. **No hallucination** — the agent is explicitly forbidden from fabricating completed work
+
+---
+
+## 🧩 Skills Runtime (Progressive Disclosure)
+
+Cowork injects `SKILL.md` guidance in three levels to keep prompts lean:
+
+1. **Always-on TOC**: a lightweight `[SKILL LIBRARY METADATA]` list is injected every turn.
+2. **Activation**: one best-matching skill can be activated from user intent + routed categories.
+3. **Scoped loading**: full instructions and explicit resources are loaded only for the active skill, then filtered through trust tiers.
+
+Skill safety controls:
+
+- Trust gates can block suspicious or mismatched skills before instruction injection.
+- Tool access is filtered by trust tier and manifest permissions.
+- If a skill over-restricts tools to an empty set, runtime falls back to the routed toolset to avoid dead-ends.
 
 ---
 
@@ -253,7 +269,9 @@ Cowork maintains a **Knowledge Graph** of facts extracted from durable user cont
 - Extracts `(subject, predicate, object)` triplets from durable user profile/preference/project-state messages
 - Applies **Exponential Weighted Average (EWA)** temporal decay for relevance scoring
 - Uses semantic + topical relevance gates during retrieval to avoid unrelated memories
+- Uses a recency fallback when semantic retrieval returns nothing (keeps continuity on low-signal turns)
 - Maintains rolling session summaries only when the user turn is durable enough to persist
+- Prunes non-durable/transient facts from long-term memory with `cowork memory prune`
 - All stored locally in `~/.cowork/memoria/` — no external vector DB required
 
 ---

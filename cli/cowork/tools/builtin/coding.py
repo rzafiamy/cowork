@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from ..base import BaseTool
-from ...workspace import WorkspaceSession, workspace_manager
+from ...workspace import workspace_manager
 
 
 def _ensure_dir(path: Path) -> Optional[Path]:
@@ -61,11 +61,9 @@ def _workspace_session_code_root(scratchpad: Any = None) -> Optional[Path]:
     if not session_id:
         return None
     try:
-        for info in workspace_manager.list_all():
-            if info.get("session_id") == session_id:
-                ws = WorkspaceSession.load(info["slug"])
-                if ws:
-                    return ws.artifacts_path / "codebase"
+        ws = workspace_manager.get_by_session_id(session_id)
+        if ws:
+            return ws.artifacts_path / "codebase"
     except Exception:
         return None
     return None

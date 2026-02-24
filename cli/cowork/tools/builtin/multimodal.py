@@ -46,13 +46,12 @@ from ...workspace import workspace_manager, WORKSPACE_ROOT
 def _get_artifacts_dir(scratchpad) -> Path:
     """Return the workspace artifacts/ path, falling back to WORKSPACE_ROOT."""
     if scratchpad:
-        for info in workspace_manager.list_all():
-            if info["session_id"] == scratchpad.session_id:
-                from ...workspace import WorkspaceSession
-                ws = WorkspaceSession.load(info["slug"])
-                if ws:
-                    return ws.artifacts_path
-    return WORKSPACE_ROOT
+        ws = workspace_manager.get_by_session_id(scratchpad.session_id)
+        if ws:
+            return ws.artifacts_path
+    fallback = WORKSPACE_ROOT / "artifacts"
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
 
 
 def _safe_filename(name: str) -> str:

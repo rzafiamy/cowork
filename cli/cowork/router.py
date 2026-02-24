@@ -158,17 +158,6 @@ class MetaRouter:
 
         return None
 
-    def _multimodal_requested(self, prompt: str) -> bool:
-        p = (prompt or "").lower()
-        patterns = [
-            r"\bgenerate (an? )?image\b", r"\bcreate (an? )?image\b", r"\bmake (an? )?image\b",
-            r"\bdraw\b", r"\bdall-?e\b", r"\bstable diffusion\b",
-            r"\bvision\b", r"\banaly[sz]e image\b", r"\bdescribe image\b", r"\bocr\b",
-            r"\btext to speech\b", r"\btts\b", r"\bspeech to text\b", r"\bstt\b", r"\btranscribe\b",
-            r"\bgénérer image\b", r"\bcréer image\b", r"\bdessiner\b", r"\bsynthèse vocale\b",
-        ]
-        return any(re.search(pat, p) for pat in patterns)
-
     def _weather_intent(self, prompt: str) -> bool:
         p = (prompt or "").lower()
         return any(w in p for w in [
@@ -178,10 +167,6 @@ class MetaRouter:
 
     def _postprocess_categories(self, prompt: str, categories: list[str], domains: list[str]) -> list[str]:
         out = list(dict.fromkeys(categories))
-
-        # Prune multimodal leakage unless the user explicitly asked for image/audio/vision.
-        if "MULTIMODAL_TOOLS" in out and not self._multimodal_requested(prompt):
-            out = [c for c in out if c != "MULTIMODAL_TOOLS"]
 
         # Force weather tools for obvious weather intent.
         if self._weather_intent(prompt) and "WEATHER_TOOLS" in domains and "WEATHER_TOOLS" not in out:

@@ -74,7 +74,7 @@ graph TD
 
     style A1 fill:#7c3aed,color:#fff
     style B1 fill:#4b5563,color:#fff
-    style C2 fill:#success,color:#fff
+    style C2 fill:#28a745,color:#fff
 ```
 
 ## 🛡️ PASS-BY-REFERENCE (Scratchpad)

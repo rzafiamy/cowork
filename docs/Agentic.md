@@ -1,61 +1,46 @@
 # 🤖 Makix Agentic Documentation Hub
 
-Welcome to the **Architectural Nerve Center** for the Makix Enterprise Agentic System. This documentation is designed for high-concurrency, long-context AI orchestration.
+Welcome to the architectural index for the Cowork runtime.
 
 ---
 
 ## 🏗️ System Overview
-*Understand the "Manager-Worker" architecture and global strategy.*
-- 🟦 **[Core Architecture & Overview](./agentic/Overview.md)**: Intro, Global Diagrams, and System Pillars.
+- 🟦 **[Core Architecture & Overview](./agentic/Overview.md)**: High-level runtime diagram and design pillars.
 
 ---
 
-## 🔄 Detailed Strategic Domains
-*Dive into specific technical implementations and strategies.*
+## 🔄 Strategic Domains
 
 ### 1️⃣ [Request Lifecycle & Workflow](./agentic/Workflow.md)
-> *From input gatekeeping to final UI rendering.*
-- 📡 **Phase-by-phase breakdown** of message lifecycle.
-- 📉 **Sequence diagrams** for logic flow.
-- ⏱️ **Live telemetry** and status feedback mechanisms.
+- End-to-end phase flow from input gatekeeper to final response.
+- Updated sequence diagrams including **Skill Runtime activation** and memory write gates.
 
 ### 2️⃣ [Memory & Context Strategy](./agentic/Memory.md)
-> *Managing "Infinite" windows and massive data payloads.*
-- 📝 **The Scratchpad**: Pass-by-Reference memory system.
-- 🖇️ **Compression**: Recursive Map-Reduce summarization.
-- 🥪 **Sandwich Previews**: Fast non-LLM text reduction.
+- Scratchpad pass-by-reference pattern (`ref:key`).
+- Context compression and large-output offloading.
+- Memoria relevance/durability controls and consolidation behavior.
 
 ### 3️⃣ [Intelligence & Reasoning](./agentic/Intelligence.md)
-> *Maximizing efficiency, accuracy, and task-aware logic.*
-- 🧠 **Meta-Router**: Dynamic tool schema loading via intent classification.
-- 🌡️ **Temperature Tiers**: Precision-targeted execution logic.
-- ⚡ **Action Mode**: High-priority specialized workflow bypass.
+- Meta-router category routing.
+- Tool-schema minimization and prompt split strategy.
+- REACT step budgeting and reflection loop.
 
 ### 4️⃣ [Operations & Robustness](./agentic/Operations.md)
-> *Persistence, safety, and operational boundaries.*
-- 🛡️ **The Sentinel**: Persistent Job Queue and restoration logic.
-- 🚧 **Execution Gateways**: Schema validation and safety clamps.
-- 🚨 **Issue Manager**: Knowledge base for mitigating repetitive tool/logic errors.
-- 📊 **Operational Mapping**: System-wide limits and settings matrix.
+- Job persistence (`~/.cowork/jobs.json`) and recovery behavior.
+- Execution gateway, firewall checks, and safety constraints.
+- Runtime limits and configuration mapping.
 
 ### 5️⃣ [Data & Relational Architecture](./new_docs/11_Concept_Relationships.md)
-> *Schema, cascading logic, and entity mapping.*
-- 🗺️ **ER Diagrams** for session-workspace linking.
-- 🔄 **Cascading Logic**: Deletion and renaming propagation rules.
-- 📁 **Path Mapping**: Logical-to-physical storage translation.
+- Session/workspace mapping and persistence relationships.
+- Cascading rename/delete behavior.
 
 ### 6️⃣ [Testing Strategy](../tests/TEST_ARCHITECTURE.md)
-> *Continuous evaluation and validation framework.*
-- 🧪 **Test Runner**: Headless evaluation mechanism.
-- 🚦 **Safety Boundaries**: Validating constraints and hallucination checks.
-- 📊 **Telemetry**: Test exports via Excel formatting.
+- Headless evaluation harness and dataset structure.
+- Regressions coverage for reasoning, memory, and tools.
 
 ---
 
 ## 🛠️ Developer Quick-Check
-- [ ] **Modifying Tools?** 🛠️ Update schema in `BaseTools` and category in `Router.js`.
-- [ ] **Updating Prompting?** 🗣️ Review "Manager" persona rules in `Overview.md`.
-- [ ] **Changing Limits?** ⚙️ Reflect changes in the `Operations.md` mapping table.
-
----
-*Generated with ❤️ for AI Architects.*
+- [ ] **Modifying routing?** Update `cli/cowork/router.py` and, if needed, `cli/cowork/skills/router.py`.
+- [ ] **Modifying skills?** Check `cli/cowork/skills/runtime.py`, `catalog.py`, and `trust.py`.
+- [ ] **Changing limits?** Sync `cli/cowork/config.py` defaults and docs tables.

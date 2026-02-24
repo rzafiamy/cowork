@@ -1,10 +1,11 @@
 # 🌐 Agentic System Overview
 
 ## 🚀 Introduction
-The **Makix Enterprise Agentic System** is a high-performance, resilient AI orchestration layer. It is engineered to overcome LLM context window limits and statelessness through two core innovations:
+The **Makix Enterprise Agentic System** is a high-performance, resilient AI orchestration layer. It is engineered to overcome LLM context window limits and statelessness through three core innovations:
 
 1.  🎭 **"Manager-Worker" Persona**: Enforces coordination over verbosity.
 2.  🔗 **"Pass-by-Reference" Memory**: Handles massive data via pointer-based logic.
+3.  🧩 **Skills Progressive Disclosure**: Loads minimal skill metadata by default and activates full `SKILL.md` instructions only when relevant.
 
 ---
 
@@ -22,12 +23,16 @@ The system is partitioned into three functional "Cerebral Zones":
 
 ### ✅ Current CLI Runtime Notes (2026)
 - Routes every turn through the Meta-Router before selecting tool schemas.
+- Runs a **Skill Runtime** after routing:
+  - Builds an always-on skill metadata TOC.
+  - Selects one best-fit skill from input + routed categories.
+  - Applies trust-gate filtering before instruction/resource injection.
 - Uses a **split system prompt strategy**:
   - `AGENT_CHAT_SYSTEM_PROMPT` for simple chat turns.
   - `AGENT_SYSTEM_PROMPT` for multi-step/tool-oriented turns.
 - Limits `✅/⚠️/❌ GOAL ...` status banners to **step-limit self-assessment** only.
 - Applies **selective memory persistence** (durable user profile/preferences/project state).
-- Applies **semantic + topical relevance gates** for memory retrieval.
+- Applies **semantic + topical relevance gates** for memory retrieval, with a small recent-memory fallback for low-signal turns.
 
 ```mermaid
 graph TD
@@ -39,14 +44,19 @@ graph TD
         Gatekeeper -- "Valid" --> JobMgr{⚙️ Agent Job Manager}
         
         JobMgr -->|Persist State| Storage[(💾 ~/.cowork/jobs.json)]
-        JobMgr -->|Queue Check| Queue{🚦 Queue < 10?}
+        JobMgr -->|Queue Check| Queue{"🚦 Queue < 10?"}
     end
 
     subgraph "Phase 2: Preparation (The Brain)"
         Queue -- Yes --> Router[🧭 Meta-Router]
         Router -->|Temp 0.0 + tool-probability| Classifier[🔍 Intent Classifier]
         Classifier -->|CONVERSATIONAL_ONLY| ChatPath[💭 Direct Chat Path]
-        Classifier -->|Tool-capable route| Tools[🛠️ Tool Schema Loading]
+        Classifier -->|Tool-capable route| SkillRuntime[🧩 Skill Runtime]
+        SkillRuntime -->|Metadata TOC| SkillMeta[[SKILL LIBRARY METADATA]]
+        SkillRuntime -->|Best-match skill| TrustGate{🛡️ Trust Gates}
+        TrustGate -->|Allowed| SkillCtx[[ACTIVE SKILL CONTEXT]]
+        TrustGate -->|Blocked| SkillBlocked[[SKILL BLOCKED NOTICE]]
+        SkillRuntime -->|Tool filtering| Tools[🛠️ Tool Schema Loading]
         Classifier -->|Inject| Actions[⚡ Action Instructions]
     end
 
@@ -54,13 +64,18 @@ graph TD
         ChatPath --> Agent
         Tools --> Agent[🤖 General Purpose Agent]
         Actions --> Agent
-        
+        SkillMeta --> Agent
+        SkillCtx --> Agent
+        SkillBlocked --> Agent
+
         Agent -->|1. Prompt Mode Select| PromptSplit{🧩 Chat Prompt or Workflow Prompt}
+        Agent -->|Memory read| MemRead[🧠 Memoria get_fused_context]
         PromptSplit -->|Workflow Prompt| Compressor[🖇️ Context Compressor]
         PromptSplit -->|Chat Prompt| LLM_G
         Compressor -- "Atomic Map-Reduce" --> LLM_S[📉 LLM Temp 0.1]
         LLM_S -->|Summary| Agent
-        
+        MemRead --> Agent
+
         Agent -->|2. Generate| LLM_G[🧠 LLM Temp 0.4]
         LLM_G -->|Tool Calls| Gateway{🚧 Execution Gateway}
         
@@ -73,6 +88,7 @@ graph TD
     end
 
     Agent -->|Final Result| JobMgr
+    Agent -->|Durable turn only| MemWrite[🚀 Memoria update]
     JobMgr -->|Clear Persistence| Storage
     JobMgr -->|Dispatch| Notification[🔔 Notification System]
     Notification -->|Render| UI[💻 Chat UI]

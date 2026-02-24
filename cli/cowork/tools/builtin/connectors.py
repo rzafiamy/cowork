@@ -94,12 +94,19 @@ class StorageWriteTool(BaseTool):
 
     def execute(self, filename: str, content: str) -> str:
         from pathlib import Path
+        from ...workspace import workspace_manager, WORKSPACE_ROOT
+
         safe_filename = Path(filename).name
         self._emit(f"💾 Writing to workspace storage: '{safe_filename}'...")
-        from ...config import CONFIG_DIR
-        storage_dir = CONFIG_DIR / "storage"
-        storage_dir.mkdir(exist_ok=True)
-        path = storage_dir / safe_filename
+        path = None
+        if self.scratchpad:
+            ws = workspace_manager.get_by_session_id(self.scratchpad.session_id)
+            if ws:
+                path = ws.artifacts_path / safe_filename
+        if path is None:
+            fallback_dir = WORKSPACE_ROOT / "artifacts"
+            fallback_dir.mkdir(parents=True, exist_ok=True)
+            path = fallback_dir / safe_filename
         path.write_text(content, encoding="utf-8")
         return f"✅ File written: {path}\n• Size: {len(content)} chars"
 

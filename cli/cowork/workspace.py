@@ -341,6 +341,25 @@ class WorkspaceManager:
                 return ws
         return None
 
+    def get_by_session_id(self, session_id: Optional[str]) -> Optional[WorkspaceSession]:
+        """Load a workspace session by exact session_id."""
+        if not session_id:
+            return None
+        for slug in self._existing_slugs():
+            ws = WorkspaceSession.load(slug)
+            if ws and ws.session_id == session_id:
+                return ws
+        return None
+
+    def ensure_for_session(self, session_id: str, title: str = "New Session") -> WorkspaceSession:
+        """
+        Return existing workspace for session_id, otherwise create one bound to it.
+        """
+        existing = self.get_by_session_id(session_id)
+        if existing:
+            return existing
+        return self.create(title=title, session_id=session_id)
+
     def list_all(self) -> list[dict]:
         """List all workspace sessions, sorted by last modified."""
         sessions = []

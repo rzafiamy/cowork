@@ -29,7 +29,7 @@ For massive data that must be seen but not fully read, the system uses a **Sandw
 
 ```mermaid
 graph TD
-    A[🏁 Step Start] --> B{🚦 Tokens > Buffer?}
+    A[🏁 Step Start] --> B{"🚦 Tokens > Buffer?"}
     B -- No --> C[🏃 Execute Turn]
     B -- Yes --> D[🔍 Identify Heavy History]
     

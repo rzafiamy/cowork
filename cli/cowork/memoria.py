@@ -317,12 +317,10 @@ class Memoria:
 
         triplet_lines = []
         for t in triplets[: self.top_k]:
-            weight = t.get("weight", 0.5)
             triplet_lines.append(
-                f"  • {t['subject']} {t['predicate']} {t['object']} (relevance: {weight:.2f})"
+                f"  • {t['subject']} {t['predicate']} {t['object']}"
             )
-
-        triplets_str = "\n".join(triplet_lines) if triplet_lines else "  (No persona facts yet)"
+        triplets_str = "\n".join(triplet_lines) if triplet_lines else "  (No relevant persona facts available)"
         summary_str = summary if summary else "(No session summary yet)"
 
         return CONTEXT_FUSION_TEMPLATE.format(

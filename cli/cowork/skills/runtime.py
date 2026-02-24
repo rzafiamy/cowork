@@ -95,19 +95,16 @@ class SkillRuntime:
                 f"failed_gates={','.join(active.trust.failed_gates if active.trust else [])}"
             )
         lines = [
-            "[ACTIVE SKILL]",
-            f"name={active.skill.name}",
-            f"description={active.skill.description}",
-            f"score={active.score:.2f}",
-            f"trust_tier={active.trust.tier}",
+            f"### 🔌 Active Skill: {active.skill.name.replace('-', ' ').title()}",
+            f"{active.skill.description}",
             "",
-            "[SKILL INSTRUCTIONS]",
-            active.instruction_body.strip() or "(no instructions for this tier)",
+            "#### 📖 Instructions",
+            active.instruction_body.strip() or "_No specific priority instructions for this task._",
         ]
         if active.resources:
-            lines.extend(["", "[SKILL RESOURCES]"])
+            lines.extend(["", "#### 🔗 Skill Resources"])
             for rel, content in active.resources:
-                lines.append(f"RESOURCE: {rel}\n{content}")
+                lines.append(f"**Resource**: `{rel}`\n{content}")
         return "\n".join(lines).strip()
 
     def _load_explicit_resources(self, skill: SkillMetadata, body: str) -> list[tuple[str, str]]:

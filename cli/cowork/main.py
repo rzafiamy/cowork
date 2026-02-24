@@ -17,6 +17,7 @@ Usage:
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -44,7 +45,7 @@ from .config import (
 )
 from .cron import CronManager
 from .memoria import Memoria
-from .workspace import WorkspaceSession, workspace_manager, WORKSPACE_ROOT
+from .workspace import workspace_manager, WORKSPACE_ROOT
 from .prompts import SESSION_RE_TITLE_PROMPT
 from .tools import get_all_available_tools
 from .tracing import (
@@ -152,6 +153,43 @@ def _make_api_client() -> "APIClient":
     )
 
 
+def _make_session_scratchpad(session_id: str) -> Scratchpad:
+    """
+    Build a scratchpad bound to the session workspace when available.
+    """
+    return Scratchpad(session_id)
+
+
+def _is_continuation_prompt(text: str) -> bool:
+    s = (text or "").strip().lower()
+    if not s:
+        return False
+    if len(s) > 120:
+        return False
+    patterns = [
+        r"^(continue|continue please|resume|go on|keep going|proceed)\b",
+        r"^(poursuis|continue stp|continue s'il te plait|reprends|vas-y)\b",
+    ]
+    return any(re.search(p, s) for p in patterns)
+
+
+def _get_pending_goal(session: Session) -> Optional[dict]:
+    md = getattr(session, "metadata", {}) or {}
+    pending = md.get("pending_goal")
+    if isinstance(pending, dict) and pending:
+        return pending
+    return None
+
+
+def _set_pending_goal(session: Session, pending: Optional[dict]) -> None:
+    if not isinstance(session.metadata, dict):
+        session.metadata = {}
+    if pending:
+        session.metadata["pending_goal"] = pending
+    else:
+        session.metadata.pop("pending_goal", None)
+
+
 # ─── Async Agent Runner ───────────────────────────────────────────────────────
 
 async def run_agent_turn(
@@ -171,10 +209,27 @@ async def run_agent_turn(
     """
     global _last_job
 
+    effective_input = user_input
+    effective_action_mode = action_mode
+    pending_goal = _get_pending_goal(session)
+    if effective_action_mode is None and pending_goal and _is_continuation_prompt(user_input):
+        routed = pending_goal.get("categories") or ["ALL_TOOLS"]
+        remaining = str(pending_goal.get("remaining", "")).strip()
+        original = str(pending_goal.get("original_request", "")).strip()
+        continuation_note = (
+            "[CONTINUATION CONTEXT]\n"
+            "Resume the pending task from the previous turn.\n"
+            f"Original request: {original or '(not captured)'}\n"
+            f"Remaining work: {remaining or '(continue from latest tool evidence)'}\n"
+            "Important: Do not claim any tool action succeeded unless it is executed and evidenced in this turn."
+        )
+        effective_input = f"{continuation_note}\n\nUser follow-up: {user_input}"
+        effective_action_mode = {"categories": routed, "pill": "#continue"}
+
     # Register job with Sentinel
     job = AgentJob(
         session_id=session.session_id,
-        prompt=user_input[:200],
+        prompt=effective_input[:200],
     )
     if not _job_manager.register(job):
         return "⚠️  Job queue is full (max 10 concurrent jobs). Please wait.", job
@@ -260,7 +315,7 @@ async def run_agent_turn(
         agent.router.classify = patched_classify
         agent.confirm_cb = on_confirm
 
-        response = await agent.run(user_input, session, job, action_mode=action_mode)
+        response = await agent.run(effective_input, session, job, action_mode=effective_action_mode)
         elapsed = time.time() - start_time
 
         if not unattended:
@@ -283,6 +338,24 @@ async def run_agent_turn(
         # Save messages to session
         session.add_message("user", user_input)
         session.add_message("assistant", response)
+        if getattr(job, "step_limit_reached", False):
+            original_request = user_input
+            if pending_goal and isinstance(pending_goal.get("original_request"), str):
+                original_request = pending_goal.get("original_request") or user_input
+            _set_pending_goal(
+                session,
+                {
+                    "created_at": int(time.time()),
+                    "original_request": original_request,
+                    "remaining": response[:1600],
+                    "categories": list(getattr(job, "routed_categories", []) or []),
+                    "step_limit_reached": True,
+                },
+            )
+        elif pending_goal and _is_continuation_prompt(user_input):
+            # If this was an explicit continuation turn and it did not hit step limit again,
+            # clear pending marker to prevent stale auto-resume behavior.
+            _set_pending_goal(session, None)
         session.save()
 
         # Auto-generate title for new sessions (on first exchange)
@@ -420,19 +493,10 @@ async def handle_command(
 
     elif command == "/new":
         new_session = Session(title="New Session")
-        # Create matching workspace session
-        ws = workspace_manager.create("New Session", session_id=new_session.session_id)
+        ws = workspace_manager.ensure_for_session(new_session.session_id, title="New Session")
         new_session._ws = ws
         new_session.workspace_slug = ws.slug
         new_session.save()
-        # Point scratchpad to workspace folder
-        # Point scratchpad to workspace folder
-        new_scratchpad = Scratchpad.__new__(Scratchpad)
-        new_scratchpad.session_id = new_session.session_id
-        new_scratchpad._dir = ws.scratchpad_path
-        new_scratchpad._dir.mkdir(exist_ok=True)
-        new_scratchpad._index = {}
-        new_scratchpad._load_index()
         render_success(
             f"✨ New session started: {new_session.session_id[:8]}\n"
             f"📂 Workspace: workspace/{ws.slug}/"
@@ -563,14 +627,12 @@ async def handle_command(
 
             if loaded:
                 render_success(f"📂 Loaded session: '{loaded.title}' ({len(loaded.messages)} messages)")
-                # Try to link workspace session
-                for ws_info in workspace_manager.list_all():
-                    if ws_info["session_id"] == loaded.session_id:
-                        ws = WorkspaceSession.load(ws_info["slug"])
-                        if ws:
-                            loaded._ws = ws
-                            render_success(f"📂 Workspace: workspace/{ws.slug}/")
-                        break
+                ws = workspace_manager.get_by_session_id(loaded.session_id)
+                if ws:
+                    loaded._ws = ws
+                    loaded.workspace_slug = ws.slug
+                    loaded.save()
+                    render_success(f"📂 Workspace: workspace/{ws.slug}/")
                 return True, loaded, False
             else:
                 render_error(f"Session '{target}' not found.")
@@ -736,9 +798,10 @@ async def handle_command(
                 render_success(f"🧹 Workspace cleaned. Deleted {ws_count} workspace folders and {s_count} session files.")
                 # We should probably reset the current session too
                 new_session = Session(title="New Session")
-                new_session.save()
-                ws = workspace_manager.create("New Session")
+                ws = workspace_manager.ensure_for_session(new_session.session_id, title="New Session")
+                new_session.workspace_slug = ws.slug
                 new_session._ws = ws
+                new_session.save()
                 return True, new_session, False
         else:
             ws = getattr(session, '_ws', None)
@@ -1116,39 +1179,77 @@ async def handle_command(
             render_error("Usage: /open <path_to_file>")
         else:
             path_str = cmd.split(maxsplit=1)[1].strip(' "\'')
-            
-            # Smart-replace if session was renamed (e.g. from new-session to actual slug)
-            if hasattr(session, '_ws') and session._ws:
-                current_slug = session._ws.slug
+
+            ws = getattr(session, "_ws", None)
+
+            # Smart-replace if session was renamed (e.g. from new-session to actual slug).
+            if ws:
+                current_slug = ws.slug
                 if "new-session" in path_str:
                     path_str = path_str.replace("new-session", current_slug)
                 else:
-                    # Also handle case where user truncated the long new slug folder
-                    # e.g., typed '0016-agentic-ai-2026-green-slide' instead of the full name
+                    # Handle truncated slug names in copied workspace paths.
                     import re
-                    match = re.search(r'workspace/([^/]+)/', path_str)
+                    match = re.search(r"workspace/([^/]+)/", path_str)
                     if match:
                         typed_slug = match.group(1)
                         if current_slug.startswith(typed_slug):
                             path_str = path_str.replace(typed_slug, current_slug)
 
-            path_to_open = Path(path_str).expanduser().resolve()
-            
-            # If still not exist, try to find the filename in the current artifacts directory globally
-            if not path_to_open.exists() and hasattr(session, '_ws') and session._ws:
-                name_only = Path(path_str).name
-                fallback = session._ws.artifacts_path / name_only
-                if fallback.exists():
-                    path_to_open = fallback
-
-            if path_to_open.exists():
-                try:
-                    click.launch(str(path_to_open))
-                    render_success(f"📂 Opened: {path_to_open}")
-                except Exception as e:
-                    render_error(f"Failed to open '{path_to_open}': {e}")
+            raw_path = Path(path_str).expanduser()
+            candidate_paths: list[Path] = []
+            if raw_path.is_absolute():
+                candidate_paths.append(raw_path)
             else:
-                render_warning(f"Path does not exist: {path_to_open}")
+                if ws:
+                    candidate_paths.extend([
+                        ws.path / raw_path,
+                        ws.artifacts_path / raw_path.name,
+                    ])
+                candidate_paths.extend([
+                    WORKSPACE_ROOT / raw_path,
+                    (WORKSPACE_ROOT / "artifacts" / raw_path.name),
+                ])
+                candidate_paths.append((Path.cwd() / raw_path))
+
+            resolved_existing = next((p.resolve() for p in candidate_paths if p.exists()), None)
+
+            if not resolved_existing and ws:
+                # Try case-insensitive and typo-tolerant lookup inside artifacts.
+                import difflib
+
+                target_name = raw_path.name
+                artifact_files = [p for p in ws.artifacts_path.iterdir() if p.is_file()] if ws.artifacts_path.exists() else []
+                exact_ci = next((p for p in artifact_files if p.name.lower() == target_name.lower()), None)
+                if exact_ci:
+                    resolved_existing = exact_ci.resolve()
+                else:
+                    close = difflib.get_close_matches(
+                        target_name,
+                        [p.name for p in artifact_files],
+                        n=3,
+                        cutoff=0.6,
+                    )
+                    if len(close) == 1:
+                        resolved_existing = (ws.artifacts_path / close[0]).resolve()
+                        render_warning(
+                            f"Path not found. Opening closest artifact match instead: {resolved_existing.name}"
+                        )
+                    elif close:
+                        suggestions = ", ".join(close)
+                        render_warning(
+                            f"Path not found. Did you mean one of: {suggestions}"
+                        )
+
+            if resolved_existing and resolved_existing.exists():
+                try:
+                    click.launch(str(resolved_existing))
+                    render_success(f"📂 Opened: {resolved_existing}")
+                except Exception as e:
+                    render_error(f"Failed to open '{resolved_existing}': {e}")
+            else:
+                attempted = ", ".join(str(p.resolve()) for p in candidate_paths) if candidate_paths else str(raw_path)
+                render_warning(f"Path does not exist. Tried: {attempted}")
 
     else:
         render_warning(f"Unknown command: {command}. Type /help for available commands.")
@@ -1164,18 +1265,7 @@ async def interactive_loop(
     trace_enabled: bool = False,
 ) -> None:
     """Main interactive REPL loop."""
-    scratchpad_session_id = session.session_id
-    # Use workspace scratchpad folder if available
-    ws = getattr(session, '_ws', None)
-    if ws:
-        scratchpad = Scratchpad.__new__(Scratchpad)
-        scratchpad.session_id = session.session_id
-        scratchpad._dir = ws.scratchpad_path
-        scratchpad._dir.mkdir(exist_ok=True)
-        scratchpad._index = {}
-        scratchpad._load_index()
-    else:
-        scratchpad = Scratchpad(session.session_id)
+    scratchpad = _make_session_scratchpad(session.session_id)
     user_id = _get_memory_user_id()
     _memoria = Memoria(user_id, session.session_id, api_client, _config)
 
@@ -1219,17 +1309,7 @@ async def interactive_loop(
 
             if new_session:
                 session = new_session
-                # Use workspace scratchpad if available
-                ws = getattr(session, '_ws', None)
-                if ws:
-                    scratchpad = Scratchpad.__new__(Scratchpad)
-                    scratchpad.session_id = session.session_id
-                    scratchpad._dir = ws.scratchpad_path
-                    scratchpad._dir.mkdir(exist_ok=True)
-                    scratchpad._index = {}
-                    scratchpad._load_index()
-                else:
-                    scratchpad = Scratchpad(session.session_id)
+                scratchpad = _make_session_scratchpad(session.session_id)
                 _memoria = Memoria(user_id, session.session_id, api_client, _config)
             continue
 
@@ -1273,12 +1353,7 @@ async def interactive_loop(
         # Workspace can be renamed after title generation; rebind scratchpad path if it moved.
         ws = getattr(session, "_ws", None)
         if ws and getattr(scratchpad, "_dir", None) != ws.scratchpad_path:
-            scratchpad = Scratchpad.__new__(Scratchpad)
-            scratchpad.session_id = session.session_id
-            scratchpad._dir = ws.scratchpad_path
-            scratchpad._dir.mkdir(exist_ok=True)
-            scratchpad._index = {}
-            scratchpad._load_index()
+            scratchpad = _make_session_scratchpad(session.session_id)
 
         # Cleanup old jobs periodically
         _job_manager.cleanup_completed(keep=50)
@@ -1329,28 +1404,22 @@ def chat(session_id: Optional[str], no_banner: bool, trace: Optional[bool]) -> N
         if not session:
             render_error(f"Session '{session_id}' not found.")
             session = Session(title="New Session")
-        
-        # Try to link workspace session
-        ws = None
-        if session.workspace_slug:
-            ws = WorkspaceSession.load(session.workspace_slug)
-        
-        if not ws:
-            # Fallback scan
-            for ws_info in workspace_manager.list_all():
-                if ws_info["session_id"] == session.session_id:
-                    ws = WorkspaceSession.load(ws_info["slug"])
-                    break
-        
+
+        ws = workspace_manager.get_by_session_id(session.session_id)
         if ws:
             session._ws = ws
-            session.workspace_slug = ws.slug # Update if it was missing/changed
+            session.workspace_slug = ws.slug
+            session.save()
+            console.print(f"  [dim_text]📂 Workspace: workspace/{ws.slug}/[/dim_text]")
+        else:
+            ws = workspace_manager.ensure_for_session(session.session_id, title=session.title or "New Session")
+            session._ws = ws
+            session.workspace_slug = ws.slug
             session.save()
             console.print(f"  [dim_text]📂 Workspace: workspace/{ws.slug}/[/dim_text]")
     else:
         session = Session(title="New Session")
-        # Create matching workspace session
-        ws = workspace_manager.create("New Session", session_id=session.session_id)
+        ws = workspace_manager.ensure_for_session(session.session_id, title="New Session")
         session._ws = ws
         session.workspace_slug = ws.slug
         session.save()
@@ -1393,9 +1462,13 @@ def run(prompt: str, session_id: Optional[str], model: Optional[str], no_stream:
     session = Session.load(session_id) if session_id else Session(title="One-shot")
     if not session:
         session = Session(title="One-shot")
+    ws = workspace_manager.ensure_for_session(session.session_id, title=session.title or "One-shot")
+    session._ws = ws
+    session.workspace_slug = ws.slug
+    session.save()
 
     api_client = _make_api_client()
-    scratchpad = Scratchpad(session.session_id)
+    scratchpad = _make_session_scratchpad(session.session_id)
     user_id = _get_memory_user_id()
     memoria = Memoria(user_id, session.session_id, api_client, _config)
 

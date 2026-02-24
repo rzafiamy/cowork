@@ -446,6 +446,14 @@ class Scratchpad:
     def __init__(self, session_id: str) -> None:
         self.session_id = session_id
         self._dir = SCRATCHPAD_DIR / session_id
+        # Prefer per-session workspace scratchpad when available.
+        try:
+            from .workspace import workspace_manager
+            ws = workspace_manager.get_by_session_id(session_id)
+            if ws:
+                self._dir = ws.scratchpad_path
+        except Exception:
+            pass
         self._dir.mkdir(exist_ok=True)
         self._index: dict[str, dict] = {}
         self._load_index()

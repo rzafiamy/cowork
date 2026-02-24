@@ -24,18 +24,24 @@ from ...workspace import workspace_manager, WORKSPACE_ROOT
 def _get_artifacts_dir(scratchpad) -> Path:
     """Return the workspace artifacts/ path, falling back to WORKSPACE_ROOT."""
     if scratchpad:
-        for info in workspace_manager.list_all():
-            if info["session_id"] == scratchpad.session_id:
-                from ...workspace import WorkspaceSession
-                ws = WorkspaceSession.load(info["slug"])
-                if ws:
-                    return ws.artifacts_path
-    return WORKSPACE_ROOT
+        ws = workspace_manager.get_by_session_id(scratchpad.session_id)
+        if ws:
+            return ws.artifacts_path
+    fallback = WORKSPACE_ROOT / "artifacts"
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
 
 
 def _safe_filename(name: str) -> str:
     """Strip path traversal, keep only the base name."""
     return Path(name).name
+
+
+def _workspace_rel_path(path: Path) -> str:
+    """Best-effort workspace-relative path for user-facing output."""
+    if path.parent.name == "artifacts":
+        return f"artifacts/{path.name}"
+    return path.name
 
 
 # ─── PDF ─────────────────────────────────────────────────────────────────────
@@ -203,11 +209,14 @@ class DocumentCreatePdfTool(BaseTool):
         doc.build(story)
         out_path.write_bytes(buf.getvalue())
         size_kb = out_path.stat().st_size // 1024
+        rel_path = _workspace_rel_path(out_path)
 
         return (
             f"✅ PDF created!\n"
             f"• File: `{out_path.name}`\n"
+            f"• Workspace path: `{rel_path}`\n"
             f"• Path: `{out_path}`\n"
+            f"• Open: `/open {rel_path}`\n"
             f"• Size: {size_kb} KB\n"
             f"• Sections: {len(section_data)}"
         )
@@ -226,7 +235,7 @@ class DocumentCreatePptxTool(BaseTool):
         return (
             "Create a PowerPoint (.pptx) presentation and save it to the workspace artifacts folder. "
             "Accepts a list of slides as JSON: "
-            "[{\"title\": \"...\", \"content\": \"...\", \"bullets\": [\"...\"]}, ...]. "
+            "[{\"title\": \"...\", \"content\": \"...\", \"bullets\": [\"...\"], \"layout\": \"auto|section|text_image\"}, ...]. "
             "The first slide is automatically a title slide. "
             "Returns the absolute file path for use with email attachments."
         )
@@ -256,13 +265,19 @@ class DocumentCreatePptxTool(BaseTool):
                     "type": "string",
                     "description": (
                         "JSON array of slides. Each slide: "
-                        "{\"title\": str, \"content\": str (optional), \"bullets\": [str] (optional), \"image\": str (absolute path, optional)}. "
-                        "Example: [{\"title\": \"Introduction\", \"bullets\": [\"Key point 1\"], \"image\": \"/path/to/chart.png\"}]"
+                        "{\"title\": str, \"content\": str (optional), \"bullets\": [str] (optional), "
+                        "\"image\": str (absolute path, optional), \"key_message\": str (optional), "
+                        "\"layout\": \"auto|section|text_image\" (optional)}. "
+                        "Example: [{\"title\": \"Introduction\", \"bullets\": [\"Key point 1\"], \"layout\": \"auto\"}]"
                     ),
                 },
                 "theme_color": {
                     "type": "string",
                     "description": "Hex color for the accent/header color, e.g. '#2563EB' (optional, default dark blue)",
+                },
+                "design_preset": {
+                    "type": "string",
+                    "description": "Visual style preset: 'executive' (default), 'bold', or 'minimal'",
                 },
             },
             "required": ["filename", "title", "slides"],
@@ -275,11 +290,12 @@ class DocumentCreatePptxTool(BaseTool):
         slides: str,
         subtitle: str = "",
         theme_color: str = "#1a1a2e",
+        design_preset: str = "executive",
     ) -> str:
         self._emit(f"📊 Creating PPTX: '{filename}'...")
         try:
             from pptx import Presentation
-            from pptx.util import Inches, Pt, Emu
+            from pptx.util import Inches, Pt
             from pptx.dml.color import RGBColor
             from pptx.enum.text import PP_ALIGN
         except ImportError:
@@ -295,19 +311,57 @@ class DocumentCreatePptxTool(BaseTool):
         if not out_path.suffix:
             out_path = out_path.with_suffix(".pptx")
 
-        # Parse hex color → RGBColor
-        def _rgb(hex_color: str) -> RGBColor:
+        # Parse hex color to RGB tuple.
+        def _rgb_tuple(hex_color: str, fallback: tuple[int, int, int]) -> tuple[int, int, int]:
             h = hex_color.lstrip("#")
             if len(h) == 3:
                 h = "".join(c * 2 for c in h)
             try:
-                return RGBColor(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+                return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
             except Exception:
-                return RGBColor(0x1A, 0x1A, 0x2E)
+                return fallback
 
-        accent = _rgb(theme_color)
-        white = RGBColor(0xFF, 0xFF, 0xFF)
-        dark_text = RGBColor(0x1A, 0x1A, 0x2E)
+        def _as_rgb(value: tuple[int, int, int]) -> RGBColor:
+            return RGBColor(value[0], value[1], value[2])
+
+        def _mix(c1: tuple[int, int, int], c2: tuple[int, int, int], ratio: float) -> tuple[int, int, int]:
+            return (
+                int(c1[0] * (1 - ratio) + c2[0] * ratio),
+                int(c1[1] * (1 - ratio) + c2[1] * ratio),
+                int(c1[2] * (1 - ratio) + c2[2] * ratio),
+            )
+
+        preset = (design_preset or "executive").strip().lower()
+        if preset not in {"executive", "bold", "minimal"}:
+            preset = "executive"
+
+        palettes = {
+            "executive": {
+                "accent": (22, 78, 99),
+                "bg": (244, 247, 250),
+                "surface": (230, 238, 245),
+                "text": (20, 30, 46),
+                "muted": (106, 121, 141),
+            },
+            "bold": {
+                "accent": (190, 52, 85),
+                "bg": (250, 242, 244),
+                "surface": (243, 222, 228),
+                "text": (45, 20, 30),
+                "muted": (126, 80, 95),
+            },
+            "minimal": {
+                "accent": (52, 98, 138),
+                "bg": (249, 250, 251),
+                "surface": (236, 240, 245),
+                "text": (30, 37, 46),
+                "muted": (112, 122, 132),
+            },
+        }
+        palette = palettes[preset].copy()
+        palette["accent"] = _rgb_tuple(theme_color, palette["accent"])
+        palette["accent_dark"] = _mix(palette["accent"], (0, 0, 0), 0.28)
+        palette["accent_soft"] = _mix(palette["accent"], (255, 255, 255), 0.75)
 
         prs = Presentation()
         prs.slide_width = Inches(13.33)
@@ -316,17 +370,29 @@ class DocumentCreatePptxTool(BaseTool):
         blank_layout = prs.slide_layouts[6]  # blank
 
         def _add_rect(slide, left, top, width, height, fill_rgb):
-            from pptx.util import Emu
             shape = slide.shapes.add_shape(
                 1,  # MSO_SHAPE_TYPE.RECTANGLE
                 Inches(left), Inches(top), Inches(width), Inches(height)
             )
             shape.fill.solid()
-            shape.fill.fore_color.rgb = fill_rgb
+            shape.fill.fore_color.rgb = _as_rgb(fill_rgb)
             shape.line.fill.background()
             return shape
 
-        def _add_textbox(slide, left, top, width, height, text, font_size, bold=False, color=None, align=PP_ALIGN.LEFT, word_wrap=True):
+        def _add_textbox(
+            slide,
+            left,
+            top,
+            width,
+            height,
+            text,
+            font_size,
+            bold=False,
+            color=None,
+            align=PP_ALIGN.LEFT,
+            word_wrap=True,
+            font_name="Aptos",
+        ):
             txb = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
             tf = txb.text_frame
             tf.word_wrap = word_wrap
@@ -336,65 +402,229 @@ class DocumentCreatePptxTool(BaseTool):
             run.text = text
             run.font.size = Pt(font_size)
             run.font.bold = bold
+            run.font.name = font_name
             if color:
-                run.font.color.rgb = color
+                run.font.color.rgb = _as_rgb(color)
             return txb
 
-        # ── Cover slide ──────────────────────────────────────────────────────
-        cover = prs.slides.add_slide(blank_layout)
-        _add_rect(cover, 0, 0, 13.33, 7.5, accent)  # full-bleed background
-        _add_rect(cover, 0, 5.5, 13.33, 2.0, RGBColor(0x0D, 0x0D, 0x1A))  # bottom strip
-        _add_textbox(cover, 0.8, 2.0, 11.73, 2.0, title, 40, bold=True, color=white, align=PP_ALIGN.LEFT)
-        if subtitle:
-            _add_textbox(cover, 0.8, 4.2, 11.73, 0.8, subtitle, 20, color=RGBColor(0xCC, 0xCC, 0xFF), align=PP_ALIGN.LEFT)
+        def _trim_text(value: str, max_chars: int) -> str:
+            s = str(value or "").strip()
+            if len(s) <= max_chars:
+                return s
+            return s[: max_chars - 3].rstrip() + "..."
 
-        # ── Content slides ───────────────────────────────────────────────────
+        # Cover slide
+        cover = prs.slides.add_slide(blank_layout)
+        _add_rect(cover, 0, 0, 13.33, 7.5, palette["bg"])
+        _add_rect(cover, 0, 0, 13.33, 1.2, palette["accent_dark"])
+        _add_rect(cover, 0, 5.9, 13.33, 1.6, palette["accent"])
+        _add_rect(cover, 8.8, 1.2, 4.53, 4.7, palette["accent_soft"])
+        _add_textbox(
+            cover,
+            0.8,
+            1.7,
+            7.6,
+            2.2,
+            _trim_text(title, 90),
+            42,
+            bold=True,
+            color=palette["text"],
+            align=PP_ALIGN.LEFT,
+            font_name="Aptos Display",
+        )
+        if subtitle:
+            _add_textbox(
+                cover,
+                0.8,
+                4.25,
+                11.7,
+                1.0,
+                _trim_text(subtitle, 120),
+                20,
+                color=palette["muted"],
+                align=PP_ALIGN.LEFT,
+                font_name="Aptos",
+            )
+        _add_textbox(
+            cover,
+            0.8,
+            6.25,
+            12.0,
+            0.6,
+            "Built with Cowork Deck Studio",
+            11,
+            color=(245, 247, 252),
+            align=PP_ALIGN.LEFT,
+            font_name="Aptos",
+        )
+
+        # Content slides with alternating layouts and message callouts.
         for i, slide_data in enumerate(slides_data):
             sl = prs.slides.add_slide(blank_layout)
-            slide_title = slide_data.get("title", f"Slide {i + 1}")
-            content_text = slide_data.get("content", "")
-            bullets = slide_data.get("bullets", [])
+            slide_title = _trim_text(slide_data.get("title", f"Slide {i + 1}"), 85)
+            content_text = _trim_text(slide_data.get("content", ""), 280)
+            bullets = [str(b).strip() for b in slide_data.get("bullets", []) if str(b).strip()][:6]
+            bullets = [_trim_text(b, 92) for b in bullets]
+            key_message = _trim_text(slide_data.get("key_message", ""), 140)
+            layout = (slide_data.get("layout", "auto") or "auto").strip().lower()
+            if layout not in {"auto", "section", "text_image"}:
+                layout = "auto"
+            if layout == "auto":
+                layout = "text_image"
 
-            # Header bar
-            _add_rect(sl, 0, 0, 13.33, 1.3, accent)
-            _add_textbox(sl, 0.3, 0.15, 12.5, 1.0, slide_title, 24, bold=True, color=white)
+            _add_rect(sl, 0, 0, 13.33, 7.5, palette["bg"])
+            _add_rect(sl, 0, 0, 13.33, 0.85, palette["accent_dark"])
+            _add_textbox(
+                sl,
+                0.35,
+                0.11,
+                11.6,
+                0.55,
+                slide_title,
+                21,
+                bold=True,
+                color=(250, 252, 255),
+                align=PP_ALIGN.LEFT,
+                font_name="Aptos Display",
+            )
+            _add_textbox(
+                sl,
+                12.2,
+                0.12,
+                0.95,
+                0.45,
+                str(i + 2),
+                12,
+                color=(224, 232, 242),
+                align=PP_ALIGN.RIGHT,
+                font_name="Aptos",
+            )
 
-            # Slide number
-            _add_textbox(sl, 12.3, 0.0, 1.0, 0.6, str(i + 2), 12, color=RGBColor(0xCC, 0xCC, 0xFF), align=PP_ALIGN.RIGHT)
+            if layout == "section":
+                _add_rect(sl, 0, 1.1, 13.33, 6.4, palette["accent_soft"])
+                _add_textbox(
+                    sl,
+                    1.0,
+                    2.2,
+                    11.3,
+                    1.6,
+                    slide_title,
+                    44,
+                    bold=True,
+                    color=palette["accent_dark"],
+                    align=PP_ALIGN.CENTER,
+                    font_name="Aptos Display",
+                )
+                if content_text:
+                    _add_textbox(
+                        sl,
+                        1.2,
+                        4.2,
+                        10.9,
+                        1.3,
+                        content_text,
+                        18,
+                        color=palette["text"],
+                        align=PP_ALIGN.CENTER,
+                        font_name="Aptos",
+                    )
+                continue
 
-            # Content area
-            y_offset = 1.5
+            image_path = slide_data.get("image")
+            has_image = bool(image_path and Path(image_path).exists())
+            image_on_right = (i % 2 == 0)
+            text_left = 0.6 if image_on_right else 6.95
+            image_left = 6.95 if image_on_right else 0.6
+
+            _add_rect(sl, text_left - 0.15, 1.05, 5.8, 5.7, palette["surface"])
+            _add_rect(sl, image_left - 0.15, 1.05, 5.8, 5.7, _mix(palette["accent_soft"], palette["bg"], 0.45))
+
+            y_offset = 1.35
             if content_text:
-                _add_textbox(sl, 0.5, y_offset, 12.33, 1.2, content_text, 16, color=dark_text)
-                y_offset += 1.4
+                _add_textbox(
+                    sl,
+                    text_left + 0.15,
+                    y_offset,
+                    5.2,
+                    1.15,
+                    content_text,
+                    17,
+                    color=palette["text"],
+                    align=PP_ALIGN.LEFT,
+                    font_name="Aptos",
+                )
+                y_offset += 1.25
 
             if bullets:
-                from pptx.util import Pt as _Pt
-                bullet_box = sl.shapes.add_textbox(Inches(0.5), Inches(y_offset), Inches(12.33), Inches(7.5 - y_offset - 0.3))
+                bullet_box = sl.shapes.add_textbox(Inches(text_left + 0.15), Inches(y_offset), Inches(5.2), Inches(3.2))
                 tf = bullet_box.text_frame
                 tf.word_wrap = True
                 for idx, bullet in enumerate(bullets):
                     p = tf.add_paragraph() if idx > 0 else tf.paragraphs[0]
-                    p.text = f"  •  {bullet}"
-                    p.space_before = _Pt(6)
+                    p.text = f"• {bullet}"
+                    p.space_before = Pt(6)
                     for run in p.runs:
-                        run.font.size = _Pt(18)
-                        run.font.color.rgb = dark_text
+                        run.font.size = Pt(16)
+                        run.font.name = "Aptos"
+                        run.font.color.rgb = _as_rgb(palette["text"])
 
-            image_path = slide_data.get("image")
-            if image_path and Path(image_path).exists():
+            if has_image:
                 try:
-                    sl.shapes.add_picture(image_path, Inches(6.5), Inches(1.5), width=Inches(6.0))
+                    sl.shapes.add_picture(str(image_path), Inches(image_left + 0.08), Inches(1.18), width=Inches(5.55), height=Inches(4.7))
                 except Exception:
-                    pass
+                    _add_textbox(
+                        sl,
+                        image_left + 0.55,
+                        3.0,
+                        4.7,
+                        0.8,
+                        "Image could not be rendered",
+                        14,
+                        color=palette["muted"],
+                        align=PP_ALIGN.CENTER,
+                        font_name="Aptos",
+                    )
+            else:
+                _add_textbox(
+                    sl,
+                    image_left + 0.6,
+                    3.0,
+                    4.7,
+                    0.8,
+                    "Add chart, screenshot, or visual proof here",
+                    14,
+                    color=palette["muted"],
+                    align=PP_ALIGN.CENTER,
+                    font_name="Aptos",
+                )
+
+            if key_message:
+                _add_rect(sl, 0.55, 6.35, 12.2, 0.78, palette["accent"])
+                _add_textbox(
+                    sl,
+                    0.85,
+                    6.5,
+                    11.7,
+                    0.45,
+                    f"Key message: {key_message}",
+                    13,
+                    bold=True,
+                    color=(250, 252, 255),
+                    align=PP_ALIGN.LEFT,
+                    font_name="Aptos",
+                )
 
         prs.save(str(out_path))
         size_kb = out_path.stat().st_size // 1024
+        rel_path = _workspace_rel_path(out_path)
 
         return (
             f"✅ PPTX created!\n"
             f"• File: `{out_path.name}`\n"
+            f"• Workspace path: `{rel_path}`\n"
             f"• Path: `{out_path}`\n"
+            f"• Open: `/open {rel_path}`\n"
+            f"• Style: {preset}\n"
             f"• Size: {size_kb} KB\n"
             f"• Slides: {1 + len(slides_data)} (1 cover + {len(slides_data)} content)"
         )
@@ -527,10 +757,13 @@ class DocumentCreateXlsxTool(BaseTool):
         size_kb = out_path.stat().st_size // 1024
 
         sheet_names = list(sheets_data.keys())
+        rel_path = _workspace_rel_path(out_path)
         return (
             f"✅ XLSX created!\n"
             f"• File: `{out_path.name}`\n"
+            f"• Workspace path: `{rel_path}`\n"
             f"• Path: `{out_path}`\n"
+            f"• Open: `/open {rel_path}`\n"
             f"• Size: {size_kb} KB\n"
             f"• Sheets: {', '.join(sheet_names)}\n"
             f"• Total rows: {total_rows}"
@@ -698,11 +931,14 @@ class DocumentCreateDocxTool(BaseTool):
 
         doc.save(str(out_path))
         size_kb = out_path.stat().st_size // 1024
+        rel_path = _workspace_rel_path(out_path)
 
         return (
             f"✅ DOCX created!\n"
             f"• File: `{out_path.name}`\n"
+            f"• Workspace path: `{rel_path}`\n"
             f"• Path: `{out_path}`\n"
+            f"• Open: `/open {rel_path}`\n"
             f"• Size: {size_kb} KB\n"
             f"• Sections: {len(section_data)}"
         )

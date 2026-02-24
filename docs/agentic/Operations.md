@@ -5,11 +5,11 @@ This document details the operational safeguards that ensure the Makix Agentic S
 ---
 
 ## 🚦 The Sentinel: Background Job Queue
-The `AgentJobManager.js` handles concurrency and protects the session lifecycle.
+The `JobManager` (`cli/cowork/config.py`) handles concurrency and protects the session lifecycle.
 
 ### 💾 Persistence & Recovery
 The system is built to be **"Refresh-Proof"**:
-*   **🔄 State Sync**: Metadata for every job is saved in real-time to `localStorage`.
+*   **🔄 State Sync**: Metadata for every job is saved in real-time to `~/.cowork/jobs.json`.
 *   **🛠️ Reconstruction**: On startup, the system detects "Ghost Jobs" from previous sessions.
 *   **🔔 Restoration Prompt**: Users can "Resume" interrupted tasks with full context recovery.
 
@@ -18,10 +18,10 @@ The system is built to be **"Refresh-Proof"**:
 *   **Session Lock**: Prevents race conditions by ensuring one session doesn't spawn duplicate logic loops.
 
 ### ⏱️ The Interaction Cooldown (Cron Safety)
-To prevent the background cleanup (`CronService.js`) from interfering with active work:
-*   **15-Minute Pause**: Any user interaction (click, keypress) or agent activity (`app-activity`) triggers a **15-minute global cooldown**.
+To prevent background cleanup from interfering with active work:
+*   **15-Minute Pause**: Any active work keeps sessions "fresh" under the configured idle threshold.
 *   **Zero-Conflict Execution**: Hygiene jobs (like session cleanup) are completely disabled during this period.
-*   **Cross-Tab Sync**: The cooldown state is synchronized via `localStorage` ('cron_pause_until'), ensuring that a cleanup started in an idle tab doesn't delete a session being used in an active tab.
+*   **Single source of truth**: Cleanup decisions are based on persisted session/job timestamps in `~/.cowork`.
 
 ---
 
@@ -53,17 +53,17 @@ The Gateway detects `ref:key` patterns in arguments.
 ---
 
 ## 📊 Operational Settings Matrix
-These values map from the **`profiles`** database table to specific system behaviors:
+These values map from `~/.cowork/config.json` to specific system behaviors:
 
-| ⚙️ UI Setting | 💾 DB Field | 🎯 Purpose |
+| ⚙️ UI Setting | 💾 Config Key | 🎯 Purpose |
 | :--- | :--- | :--- |
-| **Input Gatekeeper** | `op_user_input_limit_tokens` | **Input Guard**: Scratchpad threshold. |
-| **Context Buffer** | `op_context_limit_tokens` | **History Guard**: Map-Reduce threshold. |
-| **Tool Compression** | `op_tool_output_limit_tokens` | **Output Guard**: Tool result clamping. |
-| **Max Iterations** | `op_max_steps` | **Step Guard**: REACT loop limit. |
-| **Tools per Step** | `op_max_tool_calls_per_step` | **Concurrency Guard**: Max tools per single turn. |
-| **Global Tool Limit** | `op_max_total_tool_calls` | **Budget Guard**: Max total tools per request. |
-| **Idle Threshold** | `op_idle_threshold_seconds` | **Lifecycle**: Auto-session cleanup. |
+| **Input Gatekeeper** | `user_input_limit_tokens` | **Input Guard**: Scratchpad threshold. |
+| **Context Buffer** | `context_limit_tokens` | **History Guard**: Map-Reduce threshold. |
+| **Tool Compression** | `tool_output_limit_tokens` | **Output Guard**: Tool result clamping. |
+| **Max Iterations** | `max_steps` | **Step Guard**: REACT loop limit. |
+| **Tools per Step** | `max_tool_calls_per_step` | **Concurrency Guard**: Max tools per single turn. |
+| **Global Tool Limit** | `max_total_tool_calls` | **Budget Guard**: Max total tools per request. |
+| **Idle Threshold** | `idle_threshold_seconds` | **Lifecycle**: Auto-session cleanup. |
 
 ---
 
