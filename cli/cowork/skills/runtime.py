@@ -72,12 +72,13 @@ class SkillRuntime:
             return categories
         if "CONVERSATIONAL_ONLY" in categories:
             return categories
-        # Skills should restrict the routed set by default, not broaden it.
-        # Expansion is opt-in for explicitly orchestrated workflows.
-        if bool(self.config.get("skills_allow_category_expansion", False)):
-            for c in active.skill.tool_categories:
-                if c and c not in categories:
-                    categories.append(c)
+        # Always inject the activated skill's own categories so its tools
+        # are available.  Without this, the skill activates but its tools
+        # are never loaded because they belong to a category missing from
+        # the routed set.
+        for c in (active.skill.tool_categories or []):
+            if c and c not in categories:
+                categories.append(c)
         return categories
 
     def filter_tools(self, tools_schema: list[dict[str, Any]], active: ActiveSkillContext) -> list[dict[str, Any]]:

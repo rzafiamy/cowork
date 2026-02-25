@@ -26,15 +26,19 @@ This document traces the path of a user request from the moment it leaves the ke
 *Components: `cli/cowork/agent.py` ⮕ `cli/cowork/router.py` ⮕ `cli/cowork/skills/runtime.py`*
 
 1.  **🧭 Intent Discovery**: Run lightweight classification at **Temp 0.0**.
+    *   **Session-context-aware routing**: For short follow-up inputs (< 120 chars) in sessions with prior messages, the agent prepends a compact context hint from the last 2 turns so the router can understand the follow-up in context (e.g., user providing an email address after being asked "who should I send this to?").
+    *   **Data-value detection**: The fast-path probability estimator detects email addresses, URLs, and file paths — these are routed through the full LLM classifier to avoid being misclassified as conversational.
 2.  **🧯 Fallback Routing**: If routing/model parsing fails, use keyword fallback categories.
 3.  **🧩 Skill Activation (Progressive Disclosure)**:
     *   Builds an always-on `[SKILL LIBRARY METADATA]` table-of-contents.
     *   Selects at most one active skill from input + routed categories.
+    *   **Always injects the activated skill's own `tool_categories`** into the routed category set, ensuring the skill's tools are loaded regardless of whether the router included that category.
     *   Applies trust gates (static analysis, semantic alignment, manifest validity).
     *   Loads full `SKILL.md` body/resources only when trust checks pass.
 4.  **🛠️ Schema Pruning**:
     *   `CONVERSATIONAL_ONLY` ⮕ no tool schema construction.
     *   Tool-capable turns ⮕ filter to relevant categories, then apply skill trust-tier and manifest constraints.
+    *   **Domain-scoped filtering**: Skill tier-based safety filters (mutation blockers, network blockers) and `allowed_tools` restrictions apply **only to tools within the skill's own categories**. Tools from other domains (e.g., weather, email) pass through untouched so multi-domain requests work correctly.
     *   If skill filtering yields zero tools, runtime falls back to routed schema to avoid dead-ends.
 
 ## 🟣 Phase 4: The Worker (Memory Read + REACT Loop)
@@ -47,6 +51,7 @@ This document traces the path of a user request from the moment it leaves the ke
     *   Loads fused context from Memoria before the first reasoning call.
     *   Retrieval uses semantic + topical gates and a recent-memory fallback for low-signal turns.
 3.  **🤔 Reasoning**: Agent analyzes context and formulates a plan.
+3b. **🔄 System Message Consolidation**: Before each LLM call, all `role: system` messages are merged into a single entry at the top of the context. This prevents multi-system-message issues with certain LLM providers.
 4.  **🖇️ Context Tuning**:
     *   If context is oversized, the full compressible source is first archived to scratchpad with a named `ref:key`.
     *   Then Map-Reduce summarization runs and injects `[CONVERSATION SUMMARY]` with `Source archived at ref:...`.

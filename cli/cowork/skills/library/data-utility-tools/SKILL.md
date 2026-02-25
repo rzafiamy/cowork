@@ -7,6 +7,10 @@ triggers:
   - time
   - diagram
   - chart
+  - plot
+  - plotchar
+  - graph
+  - graphique
 trust_tier: 2
 tool_categories:
   - DATA_AND_UTILITY
@@ -17,7 +21,6 @@ permissions:
     - calc
     - gen_diagram
     - get_time
-    - get_weather
     - plotchar
 ---
 # Data Utility Tools Skill

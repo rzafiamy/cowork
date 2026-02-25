@@ -42,9 +42,17 @@ def plotchar(chart_type: str, data: str, x_key: str, y_key: str, output_path: st
         if x_key not in df.columns:
             return f"Error: x_key '{x_key}' not found in data."
         
-        # y_key isn't strictly necessary for pie charts if we just use value counts, but we'll assume it is for now
-        if chart_type != "pie" and y_key not in df.columns:
-            return f"Error: y_key '{y_key}' not found in data."
+        if y_key in df.columns and chart_type != "pie":
+            # Clean up strings like "12.5°C" or "10%" to allow plotting mixed data types
+            # We use a regex to keep only numbers, dots, and minus signs.
+            try:
+                # First try direct conversion
+                df[y_key] = pd.to_numeric(df[y_key], errors='coerce')
+                # If everything is NaN, it might be due to units, try regex cleaning
+                if df[y_key].isna().all() and not parsed_data[0].get(y_key) is None:
+                     df[y_key] = pd.to_numeric(df[y_key].astype(str).str.replace(r'[^0-9.-]', '', regex=True), errors='coerce')
+            except Exception:
+                pass
 
         # Setup plot style
         sns.set_theme(style="whitegrid")

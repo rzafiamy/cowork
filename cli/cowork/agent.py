@@ -604,8 +604,29 @@ class GeneralPurposeAgent:
             }
         else:
             self.status_cb("🧭  Phase 2 · Meta-Routing intent classification...")
-            self.trace_cb("router_request", {"prompt": processed_input})
-            routing_info = await self.router.classify(processed_input)
+            # ── Session-Context-Aware Routing ──────────────────────────────
+            # When the user sends a short follow-up (e.g., an email address
+            # in response to "who should I send it to?"), the router sees it
+            # in isolation and misclassifies it as CONVERSATIONAL_ONLY.
+            # Fix: prepend a compact context hint from recent messages so
+            # the router can understand the follow-up in context.
+            routing_prompt = processed_input
+            if session.messages and len(processed_input.strip()) < 120:
+                recent = session.messages[-4:]  # last 2 turns (user+assistant)
+                context_parts = []
+                for m in recent:
+                    role = m.get("role", "")
+                    content = str(m.get("content", "")).strip()
+                    if role in ("user", "assistant") and content:
+                        context_parts.append(f"{role}: {content[:150]}")
+                if context_parts:
+                    context_hint = " | ".join(context_parts)
+                    routing_prompt = (
+                        f"[SESSION CONTEXT: {context_hint}] "
+                        f"Current user message: {processed_input}"
+                    )
+            self.trace_cb("router_request", {"prompt": routing_prompt})
+            routing_info = await self.router.classify(routing_prompt)
             categories = routing_info["categories"]
             display = self.router.get_category_display(categories)
             self.status_cb(f"🎯  Routed to: {display} (confidence: {routing_info['confidence']:.0%})")

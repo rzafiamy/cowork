@@ -29,10 +29,11 @@ permissions:
     - document_create_pdf
     - document_create_pptx
     - document_create_xlsx
-    - web_search
-    - scrape_urls
+    - google_cse_search
+    - brave_search
+    - firecrawl_scrape
     - image_generate
-    - gen_chart
+    - plotchar
     - gen_diagram
     - scratchpad_save
     - scratchpad_read_chunk

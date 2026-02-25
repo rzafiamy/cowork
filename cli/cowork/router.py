@@ -41,6 +41,22 @@ class MetaRouter:
 
     def _estimate_tool_probability(self, prompt: str) -> float:
         p = prompt.lower()
+
+        # If the agent injected session context, this is a follow-up turn —
+        # always route through the LLM to get a context-aware classification.
+        if p.startswith("[session context:"):
+            return 0.7
+
+        # Detect data-value-like inputs that are likely follow-up parameters
+        # (email addresses, URLs, file paths) — don't fast-path these.
+        stripped = prompt.strip()
+        if re.match(r'^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$', stripped, re.IGNORECASE):
+            return 0.6  # Email address — likely a follow-up parameter
+        if re.match(r'^https?://', stripped, re.IGNORECASE):
+            return 0.6  # URL — likely needs web/search tools
+        if re.match(r'^[/~].*\.\w+$', stripped):
+            return 0.6  # File path — likely needs file/workspace tools
+
         action_terms = [
             # English - Search & Info
             "search", "find", "look up", "who is", "what is", "where is", "when did", "latest", "today", "current",
@@ -392,6 +408,13 @@ class MetaRouter:
         
         if any(w in p for w in ["google calendar", "google drive", "gmail", "gdrive", "calendar event", "upload", "agenda", "calendrier"]):
             categories.append("GOOGLE_TOOLS")
+
+        # Data & Utility (charts, calculations, diagrams)
+        if any(w in p for w in [
+            "chart", "plot", "plotchar", "graph", "diagram", "calculate", "calc",
+            "graphique", "diagramme", "courbe", "histogramme",
+        ]):
+            categories.append("DATA_AND_UTILITY")
 
         # Workspace & Scratchpad
         if any(w in p for w in ["save", "store", "remember", "scratchpad", "sauvegarder", "enregistrer", "souviens", "rappelle"]):

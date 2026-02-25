@@ -129,16 +129,41 @@ class SkillTrustEngine:
 
         if tier == 1:
             return []
+        # Tier-based safety filters apply only to tools within the skill's
+        # own categories.  Tools from other domains have their own tier/trust
+        # policies and must not be affected.
+        skill_categories = set(skill.tool_categories or [])
         if tier == 2:
-            filtered = [t for t in filtered if not is_code_execution_tool(t) and not is_mutating_tool(t)]
+            filtered = [
+                t for t in filtered
+                if str(t.get("category", "")) not in skill_categories
+                or (not is_code_execution_tool(t) and not is_mutating_tool(t))
+            ]
         elif tier == 3:
-            filtered = [t for t in filtered if not is_network_tool(t)]
+            filtered = [
+                t for t in filtered
+                if str(t.get("category", "")) not in skill_categories
+                or not is_network_tool(t)
+            ]
 
-        allowed_categories = set(skill.tool_categories or [])
         allowed_tools = set(skill.allowed_tools or [])
-        if allowed_categories:
-            filtered = [t for t in filtered if str(t.get("category", "")) in allowed_categories]
-        if allowed_tools:
-            filtered = [t for t in filtered if str(t.get("function", {}).get("name", "")) in allowed_tools]
+
+        # Only restrict tools that fall WITHIN the skill's own categories.
+        # Tools from other categories (e.g. WEATHER_TOOLS, COMMUNICATION_TOOLS)
+        # are passed through untouched so multi-domain requests work correctly.
+        if skill_categories or allowed_tools:
+            result = []
+            for t in filtered:
+                tool_cat = str(t.get("category", ""))
+                tool_name = str(t.get("function", {}).get("name", ""))
+                if tool_cat not in skill_categories:
+                    # Tool is from a different domain — pass through untouched.
+                    result.append(t)
+                    continue
+                # Tool is in the skill's domain — apply the allowed_tools filter.
+                if allowed_tools and tool_name not in allowed_tools:
+                    continue
+                result.append(t)
+            filtered = result
 
         return filtered
