@@ -116,6 +116,7 @@ CATEGORY_STYLES = {
     "GIT_TOOLS":              ("[primary]🐙 GIT_TOOLS[/primary]",               "#7C3AED"),
     "DOCUMENT_TOOLS":         ("[compress]📄 DOCUMENT_TOOLS[/compress]",        "#A78BFA"),
     "MULTIMODAL_TOOLS":       ("[primary]🎨 MULTIMODAL_TOOLS[/primary]",        "#7C3AED"),
+    "SUPABASE_TOOLS":         ("[success]🗄️  SUPABASE_TOOLS[/success]",         "#10B981"),
 }
 
 # ─── Error Prefixes ───────────────────────────────────────────────────────────

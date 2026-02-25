@@ -73,6 +73,7 @@ class MetaRouter:
             "code", "coding", "python", "javascript", "typescript", "react", "html", "css", "github", "repo",
             "git ", "branch", "commit", "push", "pull", "bug", "fix", "refactor", "implement", "deploy", "server",
             "backend", "frontend", "api", "endpoint", "database", "sql", "query", "docker", "container", "linux", "terminal",
+            "supabase", "postgrest", "table", "crud", "rows", "insert into", "select from",
             # English - Media & Multimodal
             "image", "picture", "photo", "draw", "video", "youtube", "yt ", "audio", "transcribe", "stt", "tts",
             "vision", "describe", "analyze", "ocr", "diagram", "chart",
@@ -142,6 +143,9 @@ class MetaRouter:
             "DATA": "DATA_AND_UTILITY",
             "NEXTCLOUD": "NEXTCLOUD_TOOLS",
             "GIT": "GIT_TOOLS",
+            "SUPABASE": "SUPABASE_TOOLS",
+            "DATABASE": "SUPABASE_TOOLS",
+            "POSTGREST": "SUPABASE_TOOLS",
             "CONVERSATION": "CONVERSATIONAL",
             "CHAT": "CONVERSATIONAL",
         }
@@ -167,6 +171,8 @@ class MetaRouter:
             ("SCRATCH", "SESSION_SCRATCHPAD"),
             ("NEXTCLOUD", "NEXTCLOUD_TOOLS"),
             ("GIT", "GIT_TOOLS"),
+            ("SUPABASE", "SUPABASE_TOOLS"),
+            ("POSTGREST", "SUPABASE_TOOLS"),
         ]
         for needle, canonical in contains_rules:
             if needle in token and canonical in domains:
@@ -432,6 +438,24 @@ class MetaRouter:
         # Git
         if any(w in p for w in ["git ", "clone", "commit", "push", "git init", "repository", "github repo"]):
             categories.append("GIT_TOOLS")
+
+        # Supabase / Database / Notes / Diary / Kanban
+        if any(w in p for w in [
+            "supabase", "postgrest", "database table", "list tables", "describe table",
+            "crud", "select from", "insert into",
+            # Notes
+            "create a note", "take a note", "my notes", "list notes", "delete note",
+            "update note", "edit note", "jot down", "write down", "note about",
+            # Diary / Calendar
+            "calendar", "diary", "agenda", "event", "meeting", "appointment",
+            "schedule", "recurring", "book a", "plan a",
+            "calendrier", "agenda", "événement", "réunion", "rendez-vous", "planifier",
+            # Kanban
+            "kanban", "board", "backlog", "sprint", "task board",
+            "add task", "move task", "my tasks", "task list",
+            "tâche", "tableau", "projet",
+        ]):
+            categories.append("SUPABASE_TOOLS")
 
         if not categories:
             # General fallbacks

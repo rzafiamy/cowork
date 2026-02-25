@@ -41,8 +41,6 @@ from .builtin.cron import (
     CronDeleteTool
 )
 from .builtin.connectors import (
-    NotesCreateTool, 
-    KanbanAddTaskTool, 
     StorageWriteTool, 
     GetWeatherTool
 )
@@ -92,8 +90,6 @@ def _register_builtin():
     registry.register(CronScheduleTool)
     registry.register(CronListTool)
     registry.register(CronDeleteTool)
-    registry.register(NotesCreateTool)
-    registry.register(KanbanAddTaskTool)
     registry.register(StorageWriteTool)
     registry.register(GetWeatherTool)
     registry.register(DocumentCreatePdfTool)

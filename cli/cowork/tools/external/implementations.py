@@ -23,6 +23,7 @@ from . import nextcloud
 from . import git
 from . import web_downloader
 from . import plotchar
+from . import supabase
 
 # Re-export key functions for tools/__init__.py or manager.py if needed
 # But better to aggregate them here.
@@ -33,7 +34,8 @@ EXTERNAL_TOOL_HANDLERS: dict[str, Any] = {}
 # Aggregate from all modules
 _modules = [
     youtube, search, web, news, code, weather, 
-    media, knowledge, communication, google, social, nextcloud, git, web_downloader, plotchar
+    media, knowledge, communication, google, social, nextcloud, git, web_downloader, plotchar,
+    supabase,
 ]
 
 for mod in _modules:
@@ -90,6 +92,14 @@ KEY_REQUIREMENTS: dict[str, str | list[str] | dict[str, list[str]] | None] = {
     "git_status":           None,
     "web_download_file":    None,
     "plotchar":             None,
+    # Supabase (self-hosted or cloud)
+    "supabase_list_tables":    ["SUPABASE_URL", "SUPABASE_ANON_KEY"],
+    "supabase_describe_table": ["SUPABASE_URL", "SUPABASE_ANON_KEY"],
+    "supabase_select":         ["SUPABASE_URL", "SUPABASE_ANON_KEY"],
+    "supabase_insert":         ["SUPABASE_URL", "SUPABASE_ANON_KEY"],
+    "supabase_update":         ["SUPABASE_URL", "SUPABASE_ANON_KEY"],
+    "supabase_delete":         ["SUPABASE_URL", "SUPABASE_ANON_KEY"],
+    "supabase_rpc":            ["SUPABASE_URL", "SUPABASE_ANON_KEY"],
 }
 
 def get_available_external_tools() -> list[dict]:

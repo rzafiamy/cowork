@@ -43,11 +43,15 @@ Tools are grouped into high-level functional categories in `cli/cowork/router.py
 *   `🔍 SEARCH_AND_INFO`: Retrieval tasks.
 *   `🎥 MEDIA_AND_ENTERTAINMENT`: Image generation, YouTube.
 *   `📊 DATA_AND_UTILITY`: Charts, calculation.
-*   `🔗 APP_CONNECTORS`: Third-party integrations.
+*   `🗂️ WORKSPACE_TOOLS`: Workspace file operations.
 *   `🎥 MEDIA_TOOLS`: Media tools like YouTube download (yt-dlp) and Audio/Video Conversion (ffmpeg).
 *   `🌐 WEB_TOOLS`: Scrape, crawl, or download files from URLs.
 *   `☁️ NEXTCLOUD_TOOLS`: Nextcloud file operations (upload, download, search).
 *   `🐙 GIT_TOOLS`: Git operations (init, clone, commit, push, status).
+*   `🗄️ SUPABASE_TOOLS`: Supabase / PostgREST CRUD operations. Powers three Supabase-backed skills:
+    *   **notes-supabase**: Notes CRUD (`notes_app.notes`)
+    *   **diary-supabase**: Calendar & events (`calendar.calendars`, `calendar.events`)
+    *   **kanban-supabase**: Kanban boards, columns & tasks (`kanban.boards`, `kanban.columns`, `kanban.tasks`)
 *   `💭 CONVERSATIONAL_ONLY`: Direct-answer mode with no tool schema.
 
 ### 3.2 The Routing Phase
