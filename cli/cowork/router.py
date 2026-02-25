@@ -70,6 +70,8 @@ class MetaRouter:
             "csv", "json", "xml", "txt", "log", "scratchpad", "remember", "note", "artifact", "workspace",
             # English - Productivity & Coding
             "schedule", "book", "calendar", "event", "meeting", "reminder", "task", "todo", "kanban", "cron",
+            "diary", "agenda", "appointment", "planning", "week", "this week", "my events", "my tasks",
+            "board", "backlog", "sprint", "recurring",
             "code", "coding", "python", "javascript", "typescript", "react", "html", "css", "github", "repo",
             "git ", "branch", "commit", "push", "pull", "bug", "fix", "refactor", "implement", "deploy", "server",
             "backend", "frontend", "api", "endpoint", "database", "sql", "query", "docker", "container", "linux", "terminal",
@@ -90,6 +92,8 @@ class MetaRouter:
             "mémo", "rappelle", "souviens",
             # French - Productivité & Coding
             "organiser", "réserver", "calendrier", "agenda", "événement", "reunion", "rappel", "tâche", "liste",
+            "planning", "semaine", "cette semaine", "rendez-vous", "planifier", "prévoir",
+            "tableau", "projet", "mes événements", "mes tâches", "mon planning",
             "code", "coder", "programmer", "programmation", "développement", "débugger", "corriger", "réparer",
             "implémenter", "déployer", "serveur", "base de données", "requête", "terminal", "ligne de commande",
             # French - Média & Multimodal
@@ -187,12 +191,39 @@ class MetaRouter:
             "météo", "meteo", "prévision", "température", "pluie", "neige", "vent", "orage",
         ])
 
+    def _supabase_intent(self, prompt: str) -> bool:
+        """Detect obvious diary / calendar / kanban / notes intent."""
+        p = (prompt or "").lower()
+        return any(w in p for w in [
+            # Calendar / Diary
+            "calendar", "diary", "event", "meeting", "appointment", "schedule",
+            "planning", "agenda", "my events", "this week", "recurring",
+            "calendrier", "événement", "réunion", "rendez-vous", "planifier",
+            "mon planning", "mes événements", "cette semaine", "semaine",
+            # Kanban
+            "kanban", "board", "backlog", "sprint", "my tasks", "task board",
+            "tableau", "mes tâches", "tâche",
+            # Notes
+            "my notes", "take a note", "create a note", "list notes",
+            "note about", "note sur",
+            "mes notes", "créer une note", "crée une note",
+            "prendre une note", "prends une note",
+            # Direct Supabase
+            "supabase", "postgrest",
+        ])
+
     def _postprocess_categories(self, prompt: str, categories: list[str], domains: list[str]) -> list[str]:
         out = list(dict.fromkeys(categories))
 
         # Force weather tools for obvious weather intent.
         if self._weather_intent(prompt) and "WEATHER_TOOLS" in domains and "WEATHER_TOOLS" not in out:
             out.append("WEATHER_TOOLS")
+
+        # Force Supabase tools for obvious diary/calendar/kanban/notes intent.
+        if self._supabase_intent(prompt) and "SUPABASE_TOOLS" in domains and "SUPABASE_TOOLS" not in out:
+            # Remove CONVERSATIONAL / CONVERSATIONAL_ONLY if Supabase intent is clear
+            out = [c for c in out if c not in ("CONVERSATIONAL", "CONVERSATIONAL_ONLY")]
+            out.append("SUPABASE_TOOLS")
 
         if not out:
             out = ["ALL_TOOLS"]
@@ -206,12 +237,14 @@ class MetaRouter:
         # Fast-path for small conceptual turns that are unlikely to need tools.
         tool_probability = self._estimate_tool_probability(prompt)
         if tool_probability < 0.2 and len(prompt.strip()) <= 220:
-            return {
-                "categories": ["CONVERSATIONAL_ONLY"],
-                "confidence": 0.9,
-                "reasoning": "Fast-path conversational routing (low tool-need probability).",
-                "tool_probability": tool_probability,
-            }
+            # Safety net: don't fast-path if a clear supabase-backed intent is detected
+            if not self._supabase_intent(prompt):
+                return {
+                    "categories": ["CONVERSATIONAL_ONLY"],
+                    "confidence": 0.9,
+                    "reasoning": "Fast-path conversational routing (low tool-need probability).",
+                    "tool_probability": tool_probability,
+                }
 
         # Truncate very long prompts for routing (Head/Tail truncation)
         if len(prompt) > 2000:
@@ -275,7 +308,7 @@ class MetaRouter:
 
                 res = self._keyword_fallback(prompt)
                 res["tool_probability"] = tool_probability
-                if tool_probability < 0.2:
+                if tool_probability < 0.2 and not self._supabase_intent(prompt):
                     res["categories"] = ["CONVERSATIONAL_ONLY"]
                     res["reasoning"] = "Calibrated to conversational-only after LLM routing failure."
                 else:
@@ -347,7 +380,7 @@ class MetaRouter:
                 "reasoning": parsed.get("reasoning", ""),
             }
             routed["tool_probability"] = tool_probability
-            if routed["tool_probability"] < 0.2:
+            if routed["tool_probability"] < 0.2 and not self._supabase_intent(prompt):
                 routed["categories"] = ["CONVERSATIONAL_ONLY"]
                 routed["reasoning"] = "Calibrated to conversational-only (low tool-need probability)."
             return routed
@@ -355,7 +388,7 @@ class MetaRouter:
             # JSON parse failed — fall back to keyword routing
             res = self._keyword_fallback(prompt)
             res["tool_probability"] = tool_probability
-            if tool_probability < 0.2:
+            if tool_probability < 0.2 and not self._supabase_intent(prompt):
                 res["categories"] = ["CONVERSATIONAL_ONLY"]
                 res["reasoning"] = "Calibrated to conversational-only after fallback."
             else:
@@ -446,14 +479,16 @@ class MetaRouter:
             # Notes
             "create a note", "take a note", "my notes", "list notes", "delete note",
             "update note", "edit note", "jot down", "write down", "note about",
+            "prendre une note", "créer une note", "mes notes",
             # Diary / Calendar
             "calendar", "diary", "agenda", "event", "meeting", "appointment",
             "schedule", "recurring", "book a", "plan a",
+            "planning", "semaine", "mon planning", "mes événements", "this week",
             "calendrier", "agenda", "événement", "réunion", "rendez-vous", "planifier",
             # Kanban
             "kanban", "board", "backlog", "sprint", "task board",
             "add task", "move task", "my tasks", "task list",
-            "tâche", "tableau", "projet",
+            "tâche", "tableau", "projet", "mes tâches",
         ]):
             categories.append("SUPABASE_TOOLS")
 
