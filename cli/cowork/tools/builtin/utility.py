@@ -159,3 +159,48 @@ class GenDiagramTool(BaseTool):
             "gantt": f"```mermaid\ngantt\n    title Project Timeline\n    dateFormat YYYY-MM-DD\n    section Phase 1\n    Task A :a1, 2024-01-01, 7d\n    Task B :a2, after a1, 5d\n```\n\n*Gantt for: {description}*",
         }
         return templates.get(diagram_type, f"```mermaid\n{diagram_type}\n    %% {description}\n```")
+
+class ThinkTool(BaseTool):
+    """
+    Dummy tool for multi-step reasoning. Enables the agent to perform
+    long-running reasoning or planning without prematurely exiting the REACT loop.
+    """
+    @property
+    def name(self) -> str:
+        return "think"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Use this tool when you need to perform complex reasoning, synthesize data, "
+            "or update your plan WITHOUT ending the conversation. Use this if you are "
+            "not yet ready to provide the final answer to the user."
+        )
+
+    @property
+    def category(self) -> str:
+        return "DATA_AND_UTILITY"
+
+    @property
+    def parameters(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "thoughts": {
+                    "type": "string",
+                    "description": "Your internal thoughts, analysis, or scratchpad notes."
+                },
+                "updated_plan": {
+                    "type": "string",
+                    "description": "Optional updated bulleted list of what you will do next."
+                }
+            },
+            "required": ["thoughts"],
+        }
+
+    def execute(self, thoughts: str, updated_plan: str = "") -> str:
+        self._emit(f"🧠 Reasoning internally...")
+        result = "✅ Thoughts recorded in internal memory. Proceed with your next step or tool call."
+        if updated_plan:
+            result += f" Plan updated: {updated_plan}"
+        return result

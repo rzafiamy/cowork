@@ -7,7 +7,7 @@ from .registry import registry
 from .base import BaseTool
 
 # Import builtin tools
-from .builtin.utility import CalcTool, GetTimeTool, GenDiagramTool
+from .builtin.utility import CalcTool, GetTimeTool, GenDiagramTool, ThinkTool
 from .builtin.scratchpad import (
     ScratchpadSaveTool, 
     ScratchpadListTool, 
@@ -67,6 +67,7 @@ def _register_builtin():
     registry.register(CalcTool)
     registry.register(GetTimeTool)
     registry.register(GenDiagramTool)
+    registry.register(ThinkTool)
     registry.register(ScratchpadSaveTool)
     registry.register(ScratchpadListTool)
     registry.register(ScratchpadReadChunkTool)

@@ -3,7 +3,7 @@ test_cases = [
         "category": "Media Tools",
         "name": "YouTube Download",
         "prompts": ["Please download the youtube video https://youtube.com/watch?v=aqz-KE-bpKQ as an audio file."],
-        "verify": lambda r, c: "download" in r.lower() or "audio" in r.lower() or "mp3" in r.lower() or "completed" in r.lower() or "✅" in r,
+        "verify": lambda r, c: "✅" in r or "complete" in r.lower() or "saved" in r.lower(),
     },
     {
         "category": "Media Tools",

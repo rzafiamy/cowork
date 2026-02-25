@@ -7,7 +7,7 @@ triggers:
   - video
   - metadata
   - download
-trust_tier: 2
+trust_tier: 4
 tool_categories:
   - YOUTUBE_TOOLS
 permissions:
