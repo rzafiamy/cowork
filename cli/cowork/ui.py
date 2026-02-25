@@ -1175,6 +1175,7 @@ SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/trace full",              "Render full readable trace events"),
     ("/trace raw",               "Print raw JSON trace events"),
     ("/trace path",              "Show current trace file path"),
+    ("/open ",                    "Open a workspace artifact file locally"),
     ("/clear",                   "Clear the terminal screen"),
     ("/exit",                    "Exit Cowork (also: /quit or /q)"),
     ("/quit",                    "Exit Cowork"),

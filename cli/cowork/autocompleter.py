@@ -135,6 +135,10 @@ class SuperCompleter(Completer):
         # Cache for simple history completions so we don't query DB constantly for same prefix
         self._history_cache = []
         self._cache_time = 0
+
+        # Cache for workspace artifact filenames (for /open completion)
+        self._artifact_cache: list[tuple[str, str]] = []  # (filename, session_slug)
+        self._artifact_cache_time = 0
         
         # In-memory dictionary of words/compounds seen in this session
         self.session_words = set()
@@ -215,6 +219,23 @@ class SuperCompleter(Completer):
         # return items that have a score > 75
         return [res[0] for res in results if res[1] > 75]
 
+    def _refresh_artifact_cache(self):
+        """Scan all workspace session artifacts and cache filenames."""
+        now = time.time()
+        if now - self._artifact_cache_time > 10:  # refresh every 10s max
+            self._artifact_cache = []
+            ws_root = Path.home() / ".cowork" / "workspace"
+            if ws_root.exists():
+                for session_dir in ws_root.iterdir():
+                    if not session_dir.is_dir() or session_dir.name.startswith("."):
+                        continue
+                    artifacts_dir = session_dir / "artifacts"
+                    if artifacts_dir.exists():
+                        for f in artifacts_dir.iterdir():
+                            if f.is_file():
+                                self._artifact_cache.append((f.name, session_dir.name))
+            self._artifact_cache_time = now
+
     def get_completions(self, document: Document, complete_event: Any):
         text = document.text_before_cursor
         if not text:
@@ -223,6 +244,28 @@ class SuperCompleter(Completer):
         # 1. Base Slash Commands (Exact/Prefix)
         if text.startswith("/"):
             typed = text.lower()
+
+            # 1a. /open filename completion — show artifact files
+            if typed.startswith("/open "):
+                arg = text[len("/open "):]
+                arg_lower = arg.lower()
+                self._refresh_artifact_cache()
+                seen = set()
+                for filename, slug in self._artifact_cache:
+                    if arg_lower in filename.lower() and filename not in seen:
+                        seen.add(filename)
+                        display = HTML(
+                            f"<ansigreen>📄 {self._esc(filename)}</ansigreen>  "
+                            f"<ansibrightblack>{self._esc(slug)}</ansibrightblack>"
+                        )
+                        yield Completion(
+                            filename,
+                            start_position=-len(arg),
+                            display=display,
+                            display_meta="Artifact",
+                        )
+                return
+
             for cmd, desc in self.slash_commands:
                 if typed in cmd.lower():
                     display = HTML(f"<b>{self._esc(cmd)}</b>  <ansibrightblack>{self._esc(desc)}</ansibrightblack>")

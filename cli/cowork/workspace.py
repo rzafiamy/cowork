@@ -484,7 +484,7 @@ class WorkspaceManager:
         return count
 
     def search(self, query: str) -> list[dict]:
-        """Full-text search across all session context files and notes."""
+        """Full-text search across all session context, notes, and artifact filenames."""
         query_lower = query.lower()
         results = []
         for slug in self._existing_slugs():
@@ -496,14 +496,19 @@ class WorkspaceManager:
             ctx = ws.read_context()
             if query_lower in ctx.lower():
                 hits.append("context.md")
-            # Search notes
+            # Search notes (content + filename)
             for note_path in ws.notes_path.glob("*.md"):
-                if query_lower in note_path.read_text(encoding="utf-8", errors="ignore").lower():
+                if query_lower in note_path.name.lower() or query_lower in note_path.read_text(encoding="utf-8", errors="ignore").lower():
                     hits.append(f"notes/{note_path.name}")
-            # Search scratchpad
+            # Search scratchpad (content + filename)
             for blob_path in ws.scratchpad_path.glob("*.txt"):
-                if query_lower in blob_path.read_text(encoding="utf-8", errors="ignore").lower():
+                if query_lower in blob_path.name.lower() or query_lower in blob_path.read_text(encoding="utf-8", errors="ignore").lower():
                     hits.append(f"scratchpad/{blob_path.name}")
+            # Search artifact filenames
+            if ws.artifacts_path.exists():
+                for art_path in ws.artifacts_path.iterdir():
+                    if query_lower in art_path.name.lower():
+                        hits.append(f"artifacts/{art_path.name}")
             if hits:
                 results.append({
                     "slug":    slug,

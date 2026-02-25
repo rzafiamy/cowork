@@ -45,7 +45,7 @@ from .config import (
 )
 from .cron import CronManager
 from .memoria import Memoria
-from .workspace import workspace_manager, WORKSPACE_ROOT
+from .workspace import workspace_manager, WorkspaceSession, WORKSPACE_ROOT
 from .prompts import SESSION_RE_TITLE_PROMPT
 from .tools import get_all_available_tools
 from .tracing import (
@@ -794,7 +794,7 @@ async def handle_command(
                 for r in results:
                     console.print(f"  [highlight]{r['slug']}/[/highlight] — {r['title']}")
                     for m in r["matches"]:
-                        console.print(f"    [dim_text]• {m}[/dim_text]")
+                        console.print(f"    [dim_text]• {r['slug']}/{m}[/dim_text]")
         elif sub == "open":
             ws = getattr(session, '_ws', None)
             if ws:
@@ -1289,6 +1289,23 @@ async def handle_command(
                         render_warning(
                             f"Path not found. Did you mean one of: {suggestions}"
                         )
+
+            # Global lookup across all sessions if still not found
+            if not resolved_existing:
+                target_name = raw_path.name
+                for s_info in workspace_manager.list_all():
+                    slug = s_info["slug"]
+                    if ws and slug == ws.slug:
+                        continue # Already checked current session
+                    
+                    p_ws = WorkspaceSession.load(slug)
+                    if p_ws and p_ws.artifacts_path.exists():
+                        # Direct match in artifacts
+                        match = next((p for p in p_ws.artifacts_path.iterdir() if p.name.lower() == target_name.lower()), None)
+                        if match:
+                            resolved_existing = match.resolve()
+                            render_warning(f"File found in session '[highlight]{slug}[/highlight]'.")
+                            break
 
             if resolved_existing and resolved_existing.exists():
                 try:
