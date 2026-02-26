@@ -240,6 +240,17 @@ class MetaRouter:
             out = [c for c in out if c not in ("CONVERSATIONAL", "CONVERSATIONAL_ONLY")]
             out.append("SUPABASE_TOOLS")
 
+        # Force SEARCH_TOOLS alongside NEXTCLOUD_TOOLS when the user wants to
+        # find/search for images or files online and then save them to Nextcloud.
+        if "NEXTCLOUD_TOOLS" in out and "SEARCH_TOOLS" not in out and "SEARCH_TOOLS" in domains:
+            p = self._extract_current_message(prompt).lower()
+            if any(w in p for w in [
+                "image", "photo", "picture", "find", "search", "chercher", "trouver",
+                "télécharger", "download", "fetch", "enregistrer", "sauvegarder",
+                "réelles", "reelles", "real",
+            ]):
+                out.append("SEARCH_TOOLS")
+
         if not out:
             out = ["ALL_TOOLS"]
         return out
@@ -487,6 +498,13 @@ class MetaRouter:
         # Nextcloud
         if any(w in p for w in ["nextcloud", "cloud sync", "cloud storage"]):
             categories.append("NEXTCLOUD_TOOLS")
+            # Also activate search tools if the user wants to find + save something
+            if any(w in p for w in [
+                "image", "photo", "picture", "find", "search", "chercher", "trouver",
+                "télécharger", "download", "fetch", "enregistrer", "sauvegarder",
+            ]):
+                if "SEARCH_TOOLS" not in categories:
+                    categories.append("SEARCH_TOOLS")
 
         # Git
         if any(w in p for w in ["git ", "clone", "commit", "push", "git init", "repository", "github repo"]):

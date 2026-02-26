@@ -97,8 +97,11 @@ def web_download_file(url: str, output_path: str = None) -> str:
                 filename = f"downloaded_file{ext}"
             output_path = filename
 
-        # Ensure output_path is safe (no path traversal)
-        output_path = os.path.basename(output_path)
+        # Ensure output_path is safe (block path traversal like '../../../etc/passwd')
+        # We allow absolute paths and sub-directories, but never allow '..' components.
+        output_path = os.path.normpath(output_path)
+        if ".." in output_path.split(os.sep):
+            return "❌ Security Error: Path traversal detected in output_path."
         
         # 6. Perform Download
         with open(output_path, 'wb') as f:

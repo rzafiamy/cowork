@@ -10,6 +10,7 @@ The **Scratchpad** is the central nervous system for data handling. It allows th
 ### 🏷️ Naming Conventions
 The system enforces specific naming patterns to help the agent (and users) identify data at a glance:
 *   `run_step_ledger`: A **rolling turn history** of tool-step assessments (tool results, status, and findings) for the current run.
+*   `session_tool_ledger`: (Cross-turn awareness) A **compact cumulative list** of all tool calls executed across every turn of the session. Stored as name+status only (no args) to stay small. Injected into the system prompt (≤600 chars) so the LLM knows what has already been done and doesn't repeat it.
 *   `_index.json`: The internal **metadata index** tracking keys, sizes, and timestamps of all scratchpad entries.
 *   `task_goal`: (Critical) The **Task Anchor**. Stores the structured goal, scope, and current state. 
 *   `mem_...`: Meaningful snapshots of important conversation turns (personality/preferences).
@@ -26,6 +27,7 @@ The system enforces specific naming patterns to help the agent (and users) ident
 | `_index.json` | First scratchpad write | Every scratchpad save | Discovery & prompt indexing | Persistent per session |
 | `task_goal` | Start of multi-step task | After each refinement turn | Turn re-orientation (reads first) | Persistent / Manual update |
 | `run_step_ledger` | After first tool execution | After every tool execution | Continuity & Step-by-step debug | Rolling (last 12 steps) |
+| `session_tool_ledger` | After first tool turn | Appended every tool turn | Cross-turn anti-hallucination (≤60 entries, name+status only) | Rolling (last 60 calls) |
 | `last_assistant_response`| Every turn completion | N/A (Overwritten) | Tool chaining (e.g. TTS) | Overwritten every turn |
 | `assistant_step_...` | During REACT loop (>400 chars) | N/A (Unique per step) | Reasoning continuity | Persistent per session |
 | `mem_...` | Durable user turn detected | N/A (Unique per turn) | Personality & Preferences | Persistent / Long-term |

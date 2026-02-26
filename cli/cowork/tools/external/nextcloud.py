@@ -3,6 +3,7 @@
 Implementations for interacting with a Nextcloud instance via WebDAV.
 """
 
+import io
 import os
 import urllib.parse
 from xml.etree import ElementTree
@@ -248,6 +249,97 @@ def nextcloud_search(query: str) -> str:
     except Exception as e:
         return f"Nextcloud search failed: {e}"
 
+def nextcloud_upload_from_url(url: str, remote_path: str, max_size_mb: int = 50) -> str:
+    """
+    Download a file directly from a public URL and upload it to Nextcloud
+    in a single operation — no local disk space required.
+    Supports images (jpg, jpeg, png, gif, webp, svg), PDFs, text files, and data files.
+    """
+    SAFE_CONTENT_TYPES = {
+        "image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml",
+        "image/bmp", "image/tiff",
+        "application/pdf", "text/plain", "text/markdown",
+        "application/json", "text/csv", "application/octet-stream",
+    }
+
+    creds, err = _get_nc_credentials()
+    if err:
+        return err
+
+    try:
+        import requests
+    except ImportError:
+        return "❌ `requests` is not installed. Run: pip install requests"
+
+    # ── 1. Fetch the remote file (streaming) ─────────────────────────────────
+    dl_headers = {"User-Agent": "CoworkCLI/1.0 (Nextcloud Uploader)"}
+    try:
+        dl_resp = requests.get(url, headers=dl_headers, stream=True, timeout=30)
+        dl_resp.raise_for_status()
+    except requests.exceptions.HTTPError as e:
+        return f"❌ HTTP Error fetching URL: {e}"
+    except Exception as e:
+        return f"❌ Failed to reach URL: {e}"
+
+    # ── 2. Safety checks ─────────────────────────────────────────────────────
+    content_type = dl_resp.headers.get("Content-Type", "").split(";")[0].strip().lower()
+    if content_type and content_type not in SAFE_CONTENT_TYPES:
+        # Be lenient: allow if content_type starts with image/ or text/
+        if not (content_type.startswith("image/") or content_type.startswith("text/")):
+            return (
+                f"❌ Content-Type `{content_type}` is not in the safe whitelist for direct upload. "
+                f"Allowed: images, PDF, text, JSON, CSV."
+            )
+
+    content_length = dl_resp.headers.get("Content-Length")
+    if content_length:
+        size_mb = int(content_length) / (1024 * 1024)
+        if size_mb > max_size_mb:
+            return f"❌ File too large ({size_mb:.1f} MB). Limit is {max_size_mb} MB."
+
+    # ── 3. Stream into memory (with size guard) ───────────────────────────────
+    buffer = io.BytesIO()
+    downloaded = 0
+    max_bytes = max_size_mb * 1024 * 1024
+    for chunk in dl_resp.iter_content(chunk_size=65536):
+        if chunk:
+            downloaded += len(chunk)
+            if downloaded > max_bytes:
+                return f"❌ Download aborted: exceeded {max_size_mb} MB limit during transfer."
+            buffer.write(chunk)
+
+    buffer.seek(0)
+
+    # ── 4. Upload to Nextcloud via WebDAV PUT ─────────────────────────────────
+    # Auto-detect remote filename from URL if remote_path ends with '/'
+    if remote_path.endswith("/"):
+        url_basename = os.path.basename(urllib.parse.urlparse(url).path)
+        if not url_basename:
+            url_basename = "downloaded_file"
+        remote_path = remote_path.rstrip("/") + "/" + url_basename
+
+    dav_url = _get_webdav_url(creds, remote_path)
+    user, password = creds["user"], creds["password"]
+
+    try:
+        up_resp = requests.put(
+            dav_url,
+            data=buffer,
+            auth=(user, password),
+            headers={"Content-Type": content_type or "application/octet-stream"},
+            timeout=120,
+        )
+        up_resp.raise_for_status()
+    except Exception as e:
+        return f"❌ Nextcloud upload failed: {e}"
+
+    size_kb = downloaded / 1024
+    return (
+        f"✅ Successfully fetched `{url}` ({size_kb:.1f} KB, {content_type}) "
+        f"and uploaded to Nextcloud at `{remote_path}`."
+    )
+
+
 TOOLS = [
     {
         "category": "NEXTCLOUD_TOOLS",
@@ -293,6 +385,39 @@ TOOLS = [
                     "local_path": {"type": "string", "description": "Destination local absolute path"},
                 },
                 "required": ["remote_path", "local_path"],
+            },
+        },
+    },
+    {
+        "category": "NEXTCLOUD_TOOLS",
+        "type": "function",
+        "function": {
+            "name": "nextcloud_upload_from_url",
+            "description": (
+                "Download a file (image, PDF, etc.) directly from a public URL "
+                "and upload it to Nextcloud — no local file needed. "
+                "Use this to save web images or documents straight to Nextcloud."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "Public URL of the file or image to download",
+                    },
+                    "remote_path": {
+                        "type": "string",
+                        "description": (
+                            "Destination path in Nextcloud (e.g. 'Birds/hyacinth_macaw.jpg'). "
+                            "If the path ends with '/', the filename is inferred from the URL."
+                        ),
+                    },
+                    "max_size_mb": {
+                        "type": "integer",
+                        "description": "Maximum file size in MB to allow (default: 50)",
+                    },
+                },
+                "required": ["url", "remote_path"],
             },
         },
     },

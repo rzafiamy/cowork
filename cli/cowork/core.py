@@ -183,12 +183,27 @@ async def run_agent_turn(
         routed = pending_goal.get("categories") or ["ALL_TOOLS"]
         remaining = str(pending_goal.get("remaining", "")).strip()
         original = str(pending_goal.get("original_request", "")).strip()
+        completed_tools = pending_goal.get("completed_tools", [])
+        # Build a grounding section listing tools already executed — names+status only
+        if completed_tools:
+            tool_lines = [
+                f"  {i}. {'\u2705' if t.get('status','ok')=='ok' else '\u274c'} {t.get('name','?')}"
+                for i, t in enumerate(completed_tools[-20:], 1)  # cap at last 20
+            ]
+            completed_tools_text = (
+                "\nTools ALREADY executed (do NOT repeat these):\n"
+                + "\n".join(tool_lines)
+            )
+        else:
+            completed_tools_text = ""
         continuation_note = (
             "[CONTINUATION CONTEXT]\n"
             "Resume the pending task from the previous turn.\n"
             f"Original request: {original or '(not captured)'}\n"
             f"Remaining work: {remaining or '(continue from latest tool evidence)'}\n"
-            "Important: Do not claim any tool action succeeded unless it is executed and evidenced in this turn."
+            + completed_tools_text
+            + "\nImportant: Do not claim any tool action succeeded unless it is executed and evidenced in this turn."
+            + "\nDo NOT redo tools marked \u2705 above unless the user explicitly requests it."
         )
         effective_input = f"{continuation_note}\n\nUser follow-up: {user_input}"
         effective_action_mode = {"categories": routed, "pill": "#continue"}
@@ -318,6 +333,14 @@ async def run_agent_turn(
             original_request = user_input
             if pending_goal and isinstance(pending_goal.get("original_request"), str):
                 original_request = pending_goal.get("original_request") or user_input
+            # Merge completed tools from any previous pending_goal with this turn's tool calls.
+            # Store only name+status (no args) to keep the pending_goal size small.
+            prior_tools = list(pending_goal.get("completed_tools", []) if pending_goal else [])
+            this_turn_tools = [
+                {"name": t.get("name", "?"), "status": t.get("status", "ok")}
+                for t in getattr(job, "tool_calls_list", []) or []
+            ]
+            all_completed_tools = prior_tools + this_turn_tools
             set_pending_goal(
                 session,
                 {
@@ -326,6 +349,7 @@ async def run_agent_turn(
                     "remaining": response[:1600],
                     "categories": list(getattr(job, "routed_categories", []) or []),
                     "step_limit_reached": True,
+                    "completed_tools": all_completed_tools[-40:],  # keep last 40 to cap size
                 },
             )
         elif pending_goal and is_continuation_prompt(user_input):

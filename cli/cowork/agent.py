@@ -397,10 +397,265 @@ class GeneralPurposeAgent:
                 desc = item.get('description') or 'no description'
                 size = item.get('size_chars', 0)
                 marker = " ← 🎯 TASK GOAL" if key == "task_goal" else ""
+                marker = " ← 🔧 TOOL HISTORY" if key == "session_tool_ledger" else marker
                 lines.append(f"• ref:{key} — {desc} ({size} chars){marker}")
             return "\n".join(lines)
         except Exception:
             return "(scratchpad unavailable)"
+
+    # ── Tool Ledger (cross-turn awareness) ───────────────────────────────────────
+
+    # Static map: tool_name → action phrase template.
+    # {arg} is replaced with key_arg; {count} with the repeat count.
+    # Zero LLM cost — pure string substitution.
+    _TOOL_ACTION_PHRASES: dict[str, str] = {
+        # Nextcloud
+        "nextcloud_create_folder":    'Created Nextcloud folder "{arg}"',
+        "nextcloud_upload":           'Uploaded "{arg}" to Nextcloud',
+        "nextcloud_upload_from_url":  'Uploaded "{arg}" from URL to Nextcloud',
+        "nextcloud_download":         'Downloaded "{arg}" from Nextcloud',
+        "nextcloud_delete":           'Deleted "{arg}" from Nextcloud',
+        "nextcloud_list":             'Listed Nextcloud directory "{arg}"',
+        "nextcloud_search":           'Searched Nextcloud for "{arg}"',
+        # Web / Download
+        "web_download_file":          'Downloaded "{arg}" from the web',
+        "web_scrape":                 'Scraped web page "{arg}"',
+        "web_crawl":                  'Crawled website "{arg}"',
+        # Search
+        "google_cse_search":          'Searched Google for "{arg}"',
+        "google_search":              'Searched Google for "{arg}"',
+        "brave_search":               'Searched the web for "{arg}"',
+        "wikipedia_search":           'Looked up Wikipedia: "{arg}"',
+        "youtube_search":             'Searched YouTube for "{arg}"',
+        # Communication
+        "send_email":                 'Sent email to "{arg}"',
+        "send_telegram":              'Sent Telegram message to "{arg}"',
+        # Files / Workspace
+        "workspace_write":            'Wrote file "{arg}"',
+        "workspace_read":             'Read file "{arg}"',
+        "workspace_list":             'Listed workspace directory "{arg}"',
+        # Scratchpad
+        "scratchpad_save":            'Saved data to scratchpad key "{arg}"',
+        "scratchpad_read_chunk":      'Read scratchpad key "{arg}"',
+        # Multimodal
+        "image_generate":             'Generated image "{arg}"',
+        "vision_analyze":             'Analyzed image "{arg}"',
+        "text_to_speech":             'Converted text to speech "{arg}"',
+        "speech_to_text":             'Transcribed audio "{arg}"',
+        # Git
+        "git_commit":                 'Committed to git: "{arg}"',
+        "git_push":                   'Pushed to git remote "{arg}"',
+    }
+
+    @classmethod
+    def _tool_sentence(cls, tool: str, key_arg: str, count: int, last_arg: str, status: str) -> str:
+        """
+        Build a natural-language sentence describing what a tool (or a group of
+        repeated tool calls) did. Zero LLM cost — purely template-based.
+
+        Single call:  'Uploaded "Bird_1.jpg" to Nextcloud.'  ✅
+        Group of N:   'Downloaded 10 files from the web (Bird_1.jpg … Bird_10.jpg).'  ✅
+        """
+        icon = "✅" if status == "ok" else "❌"
+        phrase_tpl = cls._TOOL_ACTION_PHRASES.get(tool)
+
+        if count == 1:
+            if phrase_tpl:
+                phrase = phrase_tpl.format(arg=key_arg or "…")
+            else:
+                phrase = f'Called `{tool}`' + (f' with "{key_arg}"' if key_arg else "")
+            return f"{phrase}. {icon}"
+        else:
+            # Multiple consecutive calls of the same tool
+            if phrase_tpl:
+                # Pluralise the verb phrase for groups
+                base = phrase_tpl.format(arg="{files}")  # placeholder
+                if key_arg and last_arg and key_arg != last_arg:
+                    files_str = f"{count} items ({key_arg} … {last_arg})"
+                elif key_arg:
+                    files_str = f"{count} items ({key_arg} …)"
+                else:
+                    files_str = f"{count} items"
+                phrase = base.replace("{files}", files_str)
+            else:
+                phrase = f'Called `{tool}` {count} times'
+                if key_arg and last_arg and key_arg != last_arg:
+                    phrase += f' ({key_arg} … {last_arg})'
+                elif key_arg:
+                    phrase += f' ({key_arg} …)'
+            return f"{phrase}. {icon}"
+
+    def _build_session_tool_ledger(self) -> str:
+        """
+        Read the persisted ledger and return a natural-language narrative
+        of what tools were already executed this session.
+        Returned string is injected directly into the system prompt (≤600 chars).
+        """
+        try:
+            import json as _json
+            raw = self.scratchpad.get("session_tool_ledger") or ""
+            if not raw:
+                return "(no prior tool calls in this session)"
+            # Extract JSON portion
+            json_part = ""
+            if "Raw: " in raw:
+                json_part = raw.split("Raw: ", 1)[1].strip()
+            try:
+                entries = _json.loads(json_part) if json_part.startswith("[") else []
+            except Exception:
+                entries = []
+            if not entries:
+                return "(no prior tool calls in this session)"
+            return self._render_ledger_narrative(entries)
+        except Exception:
+            return "(tool ledger unavailable)"
+
+    def _render_ledger_narrative(self, entries: list[dict]) -> str:
+        """
+        Convert stored ledger entries into a natural-language bullet list.
+        Groups consecutive identical tool calls per turn into a single sentence.
+        """
+        from collections import defaultdict as _dd
+        by_turn: dict = _dd(list)
+        for e in entries:
+            by_turn[e["turn"]].append(e)
+
+        lines = ["[WHAT WAS ALREADY DONE THIS SESSION]"]
+        for t in sorted(by_turn):
+            turn_entries = by_turn[t]
+            i = 0
+            while i < len(turn_entries):
+                e = turn_entries[i]
+                tool = e["tool"]
+                status = e.get("status", "ok")
+                group = [e]
+                j = i + 1
+                while (j < len(turn_entries)
+                       and turn_entries[j]["tool"] == tool
+                       and turn_entries[j].get("status") == status):
+                    group.append(turn_entries[j])
+                    j += 1
+                count = len(group)
+                first_arg = group[0].get("key_arg", "") or ""
+                last_arg = group[-1].get("key_arg", "") if count > 1 else ""
+                sentence = self._tool_sentence(tool, first_arg, count, last_arg, status)
+                lines.append(f"  - {sentence}  (turn {t})")
+                i = j
+        return "\n".join(lines)
+
+    @staticmethod
+    def _extract_key_arg(args: dict) -> str:
+        """
+        Extract the single most meaningful argument value for a tool call.
+        Used to give the LLM context beyond just the tool name (e.g. which file was uploaded).
+        Priority: domain-specific path/url keys → first string value → empty.
+        """
+        if not isinstance(args, dict):
+            return ""
+        # Ordered priority of meaningful arg names across all tools
+        priority_keys = [
+            "remote_path", "path", "local_path", "output_path", "url",
+            "query", "filename", "file_path", "folder", "dest", "source",
+            "key", "message", "subject", "to",
+        ]
+        for k in priority_keys:
+            v = args.get(k)
+            if v and isinstance(v, str):
+                # Keep just the basename/last segment for paths to save chars
+                stripped = v.strip()
+                if "/" in stripped:
+                    stripped = stripped.rsplit("/", 1)[-1] or stripped
+                return stripped[:40]
+        # Fallback: first string value
+        for v in args.values():
+            if v and isinstance(v, str):
+                return str(v)[:40]
+        return ""
+
+    def _update_session_tool_ledger(self, tool_calls_executed: list[dict]) -> None:
+        """
+        Persist the cumulative cross-turn tool-call ledger.
+        Stores {turn, tool, key_arg, status} — max 60 entries.
+        key_arg is the single most informative argument (file name, path, query…)
+        so the LLM understands *what* was done, not just *which tool* ran.
+        Rendered output groups repeated tools: ✅web_download_file×6(Bird_1.jpg…Bird_6.jpg)
+        """
+        if not tool_calls_executed:
+            return
+        try:
+            import json as _json
+            existing_raw = self.scratchpad.get("session_tool_ledger") or ""
+            json_part = ""
+            if "Raw: " in existing_raw:
+                json_part = existing_raw.split("Raw: ", 1)[1].strip()
+            try:
+                existing = _json.loads(json_part) if json_part.startswith("[") else []
+            except Exception:
+                existing = []
+
+            turns = {e.get("turn", 0) for e in existing}
+            current_turn = (max(turns) + 1) if turns else 1
+
+            for tc in tool_calls_executed:
+                existing.append({
+                    "turn": current_turn,
+                    "tool": tc.get("name", "?"),
+                    "key_arg": self._extract_key_arg(tc.get("args", {})),
+                    "status": tc.get("status", "ok"),
+                })
+
+            # Cap at 60 entries to bound size
+            if len(existing) > 60:
+                existing = existing[-60:]
+
+            # ── Render: group repeated tools within the same turn ─────────────
+            # e.g. 6x web_download_file → ✅web_download_file×6(Bird_1.jpg…Bird_6.jpg)
+            from collections import defaultdict as _dd
+            by_turn: dict = _dd(list)
+            for e in existing:
+                by_turn[e["turn"]].append(e)
+
+            lines = ["[TOOL LEDGER]"]
+            for t in sorted(by_turn):
+                entries = by_turn[t]
+                # Group consecutive same-tool runs
+                segments: list[str] = []
+                i = 0
+                while i < len(entries):
+                    e = entries[i]
+                    icon = "✅" if e.get("status") == "ok" else "❌"
+                    tool = e["tool"]
+                    # Collect consecutive same-tool, same-status entries
+                    group = [e]
+                    j = i + 1
+                    while j < len(entries) and entries[j]["tool"] == tool and entries[j].get("status") == e.get("status"):
+                        group.append(entries[j])
+                        j += 1
+                    count = len(group)
+                    first_arg = group[0].get("key_arg", "")
+                    last_arg = group[-1].get("key_arg", "") if count > 1 else ""
+                    if count == 1:
+                        arg_str = f"({first_arg})" if first_arg else ""
+                    else:
+                        if first_arg and last_arg and first_arg != last_arg:
+                            arg_str = f"×{count}({first_arg}…{last_arg})"
+                        elif first_arg:
+                            arg_str = f"×{count}({first_arg})"
+                        else:
+                            arg_str = f"×{count}"
+                    segments.append(f"{icon}{tool}{arg_str}")
+                    i = j
+                lines.append(f"  T{t}: {', '.join(segments)}")
+            readable = "\n".join(lines)
+
+            self.scratchpad.save(
+                "session_tool_ledger",
+                self._render_ledger_narrative(existing)
+                + "\nRaw: " + _json.dumps(existing, ensure_ascii=False),
+                description=f"Tool history ({len(existing)} calls, {len(by_turn)} turns)",
+            )
+        except Exception:
+            pass
 
     # ── Plan Phase (Phase 2.5: Plan-then-Execute) ────────────────────────────────
 
@@ -832,6 +1087,9 @@ class GeneralPurposeAgent:
         skill_context = self.skill_runtime.build_context_message(active_skill) or "(No specific skill active)"
         tool_contract = self._build_tool_contract_message(tools_schema)
 
+        # ── Tool History Ledger (cross-turn awareness) ─────────────────────────
+        session_tool_ledger = self._build_session_tool_ledger()
+
         if "CONVERSATIONAL_ONLY" in categories:
             system_prompt = AGENT_CHAT_SYSTEM_PROMPT.format(
                 current_datetime=current_dt,
@@ -852,6 +1110,19 @@ class GeneralPurposeAgent:
                 tool_contract=tool_contract,
                 execution_plan=execution_plan_text,
             )
+            # Append tool ledger as a grounding note so the LLM knows prior actions.
+            # Hard-cap at 600 chars to avoid context bloat.
+            if session_tool_ledger and "(no prior tool calls" not in session_tool_ledger:
+                ledger_snippet = session_tool_ledger[:600]
+                if len(session_tool_ledger) > 600:
+                    ledger_snippet += "\n  … (truncated)"
+                system_prompt = (
+                    system_prompt
+                    + "\n\n## 🔧 Prior Tool Calls This Session\n"
+                    + "**CRITICAL**: The following tools have ALREADY been executed in previous turns. "
+                    + "Do NOT repeat them unless the user explicitly asks or a result failed.\n"
+                    + ledger_snippet
+                )
 
         # ── Build Message List ────────────────────────────────────────────────
         chat_history = session.get_chat_messages()
@@ -1235,6 +1506,9 @@ class GeneralPurposeAgent:
 
         # ── Phase 5: Memory Update ───────────────────────────────────────────
         persist_memory = self._should_persist_memory(user_input)
+        # Always update session summary when tools were executed, even if the
+        # user message itself is not "durable" (e.g., action turns like uploads).
+        has_tool_actions = total_tool_calls > 0
         self.status_cb("🚀  Phase 5 · Memory ingestion...")
         self.trace_cb(
             "memory_update_request",
@@ -1242,13 +1516,23 @@ class GeneralPurposeAgent:
                 "user_input": user_input,
                 "assistant_response": final_response,
                 "persist_memory": persist_memory,
+                "has_tool_actions": has_tool_actions,
             },
         )
-        if persist_memory:
-            await self.memoria.update(user_input, final_response)
-            self.trace_cb("memory_update_done", {"persisted": True})
+        if persist_memory or has_tool_actions:
+            await self.memoria.update(
+                user_input,
+                final_response,
+                force_summary=has_tool_actions,
+            )
+            self.trace_cb("memory_update_done", {"persisted": True, "force_summary": has_tool_actions})
         else:
             self.trace_cb("memory_update_done", {"persisted": False, "reason": "non-durable message"})
+
+        # ── Update cross-turn tool call ledger ───────────────────────────────
+        if has_tool_actions:
+            executed_calls = getattr(trace, "all_tool_calls_executed", [])
+            self._update_session_tool_ledger(executed_calls)
 
         auto_refs = bool(self.config.get("auto_save_important_refs", True))
         should_save_session_ref = (

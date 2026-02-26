@@ -650,20 +650,34 @@ class Memoria:
         self._db.commit()
         return len(doomed_ids)
 
-    async def update(self, user_message: str, assistant_response: str) -> None:
+    async def update(self, user_message: str, assistant_response: str, force_summary: bool = False) -> None:
         """
         Non-blocking memory update (called in background).
         Extracts triplets and updates session summary in parallel.
+
+        Args:
+            user_message: The user's input text.
+            assistant_response: The assistant's final response.
+            force_summary: If True, always update the session summary even when
+                           the user message is not a durable profile statement.
+                           Set to True for turns that executed tool calls (action turns)
+                           so the rolling session context stays up-to-date.
         """
-        if not user_message or not self._is_durable_memory_candidate(user_message):
+        is_durable = self._is_durable_memory_candidate(user_message)
+        if not user_message:
             return
+
         try:
             import asyncio
 
-            await asyncio.gather(
-                self._process_triplets(user_message),
-                self._update_session_summary(user_message, assistant_response),
-            )
+            tasks = []
+            if is_durable:
+                tasks.append(self._process_triplets(user_message))
+            if is_durable or force_summary:
+                tasks.append(self._update_session_summary(user_message, assistant_response))
+
+            if tasks:
+                await asyncio.gather(*tasks)
         except Exception:
             pass  # Memory failures are non-fatal
 
