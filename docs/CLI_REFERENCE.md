@@ -149,6 +149,7 @@ Show current configuration.
 Options:
 
 - `--set KEY VALUE`: set one or more config values
+- `--model-all MODEL`: set the same model for text, router, and compress
 
 Examples:
 
@@ -156,6 +157,7 @@ Examples:
 cowork config
 cowork config --set show_trace true
 cowork config --set max_steps 20 --set stream false
+cowork config --model-all gpt-4o
 ```
 
 ### `cowork ping`
@@ -315,7 +317,7 @@ These are chat-time commands, not shell subcommands:
 - `/sessions search <regex>`
 - `/load <session_id_or_number>`
 - `/jobs`, `/jobs clean`, `/jobs resume <job_id>`
-- `/config`, `/config set <key> <value>`
+- `/config`, `/config set <key> <value>`, `/config model-all <model>`
 - `/scratchpad`
 - `/workspace`, `/workspace list`, `/workspace search <q>`, `/workspace open`, `/workspace clean`
 - `/trace`

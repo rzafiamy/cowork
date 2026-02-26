@@ -38,6 +38,11 @@ async def handle_config(
             render_success(f"✅ Set {key} = {shown_value}")
         else:
             render_error("Usage: /config set <key> <value>")
+    elif len(parts) >= 3 and parts[1] == "model-all":
+        model = parts[2]
+        for key in ["model_text", "model_router", "model_compress"]:
+            _config.set(key, model)
+            render_success(f"✅ Set {key} = {model}")
     else:
         render_config(_config.all())
 

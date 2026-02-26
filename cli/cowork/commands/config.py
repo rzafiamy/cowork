@@ -15,9 +15,15 @@ from ..core import _config
 
 @click.command()
 @click.option("--set", "set_values", nargs=2, multiple=True, metavar="KEY VALUE", help="Set a config value")
-def config(set_values: tuple) -> None:
+@click.option("--model-all", "model_all", metavar="MODEL", help="Set the same model for text, router, and compress")
+def config(set_values: tuple, model_all: str | None) -> None:
     """Show or update configuration."""
     print_banner()
+    if model_all:
+        for key in ["model_text", "model_router", "model_compress"]:
+            _config.set(key, model_all)
+            render_success(f"Set {key} = {model_all}")
+
     if set_values:
         for key, value in set_values:
             try:
