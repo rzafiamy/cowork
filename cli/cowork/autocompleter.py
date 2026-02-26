@@ -139,6 +139,10 @@ class SuperCompleter(Completer):
         # Cache for workspace artifact filenames (for /open completion)
         self._artifact_cache: list[tuple[str, str]] = []  # (filename, session_slug)
         self._artifact_cache_time = 0
+
+        # Cache for cron job IDs (for /cron view|rm|run completion)
+        self._cron_cache: list[tuple[str, str]] = []  # (job_id, preview)
+        self._cron_cache_time = 0
         
         # In-memory dictionary of words/compounds seen in this session
         self.session_words = set()
@@ -238,6 +242,22 @@ class SuperCompleter(Completer):
                                 self._artifact_cache.append((f.name, session_dir.name))
             self._artifact_cache_time = now
 
+    def _refresh_cron_cache(self) -> None:
+        """Reload cron job IDs from disk (cheap JSON read, cached for 10s)."""
+        now = time.time()
+        if now - self._cron_cache_time > 10:
+            self._cron_cache = []
+            try:
+                from .cron import CronManager
+                mgr = CronManager()
+                for job in mgr.list_all():
+                    preview = job.prompt[:40].replace("\n", " ")
+                    sched = f"{job.schedule_type} @ {job.schedule_value}"
+                    self._cron_cache.append((job.job_id, f"{sched}  — {preview}"))
+            except Exception:
+                pass
+            self._cron_cache_time = now
+
     def get_completions(self, document: Document, complete_event: Any):
         text = document.text_before_cursor
         if not text:
@@ -266,6 +286,46 @@ class SuperCompleter(Completer):
                             display=display,
                             display_meta="Artifact",
                         )
+                return
+
+            # 1b. /cron <sub> <job_id> — complete job IDs
+            _CRON_ID_SUBS = ("/cron view ", "/cron rm ", "/cron run ", "/cron delete ")
+            for _prefix in _CRON_ID_SUBS:
+                if typed.startswith(_prefix):
+                    arg = text[len(_prefix):]
+                    arg_lower = arg.lower()
+                    self._refresh_cron_cache()
+                    for job_id, meta in self._cron_cache:
+                        if job_id.startswith(arg_lower):
+                            display = HTML(
+                                f"<ansiyellow>⏰ {self._esc(job_id)}</ansiyellow>  "
+                                f"<ansibrightblack>{self._esc(meta)}</ansibrightblack>"
+                            )
+                            yield Completion(
+                                job_id,
+                                start_position=-len(arg),
+                                display=display,
+                                display_meta="Cron Job",
+                            )
+                    return
+
+            # 1c. /cron add <schedule_type> — complete schedule types
+            if typed.startswith("/cron add "):
+                arg = text[len("/cron add "):]
+                parts = arg.split()
+                # Only suggest schedule_type when it's the first arg
+                if len(parts) <= 1:
+                    arg_lower = (parts[0] if parts else "").lower()
+                    for stype, hint in [("once", "Run once at a specific time"),
+                                        ("daily", "Run every day at HH:MM"),
+                                        ("weekly", "Run every week at HH:MM")]:
+                        if stype.startswith(arg_lower):
+                            yield Completion(
+                                stype,
+                                start_position=-len(parts[0]) if parts else 0,
+                                display=HTML(f"<ansicyan>{self._esc(stype)}</ansicyan>  <ansibrightblack>{self._esc(hint)}</ansibrightblack>"),
+                                display_meta="Schedule Type",
+                            )
                 return
 
             for cmd, desc in self.slash_commands:

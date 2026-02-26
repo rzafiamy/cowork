@@ -558,9 +558,10 @@ def render_cron_list(jobs: list[Any]) -> None:
         show_lines=True,
     )
     table.add_column("Job ID", style="muted", width=10)
-    table.add_column("Prompt Preview", style="highlight", min_width=30)
+    table.add_column("Prompt Preview", style="highlight", min_width=28)
     table.add_column("Schedule", justify="center", style="accent")
     table.add_column("Next Run", justify="center", style="bold_white")
+    table.add_column("Last Run", justify="center", style="dim_text")
     table.add_column("Status", justify="center")
     table.add_column("Runs", justify="center", style="muted")
 
@@ -573,15 +574,17 @@ def render_cron_list(jobs: list[Any]) -> None:
 
     for job in jobs:
         status_display = status_styles.get(job.status, job.status)
-        prompt = job.prompt[:50] + "..." if len(job.prompt) > 50 else job.prompt
+        prompt = job.prompt[:48] + "…" if len(job.prompt) > 48 else job.prompt
         next_run = job.next_run[:16].replace("T", " ") if job.next_run else "—"
+        last_run = job.last_run[:16].replace("T", " ") if getattr(job, "last_run", None) else "Never"
         schedule = f"{job.schedule_type}: {job.schedule_value}"
-        
+
         table.add_row(
             job.job_id,
             prompt,
             schedule,
             next_run,
+            last_run,
             status_display,
             str(job.run_count),
         )
@@ -1104,7 +1107,10 @@ def render_help() -> None:
         ("/tokens reset",                   "Reset all token usage counters"),
         ("/reset",                          "Delete all ~/.cowork/* data and exit"),
         ("/cron",                           "List all scheduled cron jobs"),
+        ("/cron add <type> <time> <prompt>", "Add a new cron job (type: once|daily|weekly)"),
         ("/cron view <id>",                 "View details and last execution result"),
+        ("/cron run <id>",                  "Force-run a cron job immediately"),
+        ("/cron search <query>",            "Search cron jobs by prompt or schedule"),
         ("/cron rm <id>",                   "Remove a scheduled task"),
         ("/ai",                             "List saved AI profiles"),
         ("/ai add <name> <endpoint> <model>","Add a new AI profile"),
@@ -1222,8 +1228,11 @@ SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/tokens reset",            "Reset all token usage counters"),
     ("/reset",                   "Delete all ~/.cowork/* data and exit"),
     ("/cron",                           "List all scheduled cron jobs"),
-    ("/cron view ",                     "View cron job result  e.g. /cron view abc12345"),
-    ("/cron rm ",                       "Remove a cron job  e.g. /cron rm abc12345"),
+    ("/cron add ",                        "Add a job  e.g. /cron add daily 09:00 Send weather report"),
+    ("/cron view ",                      "View cron job result  e.g. /cron view abc12345"),
+    ("/cron run ",                        "Force-run a job now  e.g. /cron run abc12345"),
+    ("/cron search ",                     "Search jobs  e.g. /cron search daily"),
+    ("/cron rm ",                         "Remove a cron job  e.g. /cron rm abc12345"),
     ("/memory",                         "Show memory dashboard (context + facts)"),
     ("/memory search ",                  "Search knowledge facts  e.g. /memory search python"),
     ("/memory add ",                     "Manually add a fact  e.g. /memory add User likes pizza"),

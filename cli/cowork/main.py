@@ -21,6 +21,7 @@ import re
 import sys
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -43,7 +44,7 @@ from .config import (
     TokenTracker,
     is_sensitive_key,
 )
-from .cron import CronManager
+from .cron import CronManager, _now
 from .memoria import Memoria
 from .workspace import workspace_manager, WorkspaceSession, WORKSPACE_ROOT
 from .prompts import SESSION_RE_TITLE_PROMPT
@@ -454,35 +455,45 @@ async def run_agent_turn(
 
 
 async def _background_cron_poll():
-    """Periodically check and run pending cron jobs while the app is open."""
-    mgr = CronManager()
+    """Periodically check and run pending cron jobs while the app is open.
+    Polls every 60 s so minute-resolution schedules fire on time.
+    CronManager is reloaded each tick to pick up externally added jobs.
+    """
     api_client = _make_api_client()
     try:
         while True:
+            await asyncio.sleep(60)  # poll every minute
+            mgr = CronManager()      # re-read from disk each tick
             pending = mgr.get_pending_jobs()
             for job in pending:
-                # Load or create session for the job
-                session = Session.load(job.session_id) if job.session_id else Session(title=f"Cron: {job.job_id}")
-                if not session:
-                    session = Session(title=f"Cron: {job.job_id}")
-                
-                scratchpad = Scratchpad(session.session_id)
-                user_id = _get_memory_user_id()
-                memoria = Memoria(user_id, session.session_id, api_client, _config)
+                try:
+                    session = (
+                        Session.load(job.session_id)
+                        if job.session_id
+                        else Session(title=f"Cron: {job.job_id}")
+                    )
+                    if not session:
+                        session = Session(title=f"Cron: {job.job_id}")
 
-                response, _ = await run_agent_turn(
-                    user_input=job.prompt,
-                    session=session,
-                    api_client=api_client,
-                    scratchpad=scratchpad,
-                    memoria=memoria,
-                    show_routing=False,
-                    unattended=True,
-                )
-                mgr.mark_run(job.job_id, result=response)
-                render_success(f"🔔 Background Job Completed: {job.job_id}")
-            
-            await asyncio.sleep(300)  # Poll every 5 min — was 60s; cron resolution is minutes, not seconds
+                    scratchpad = Scratchpad(session.session_id)
+                    user_id = _get_memory_user_id()
+                    memoria = Memoria(user_id, session.session_id, api_client, _config)
+
+                    response, _ = await run_agent_turn(
+                        user_input=job.prompt,
+                        session=session,
+                        api_client=api_client,
+                        scratchpad=scratchpad,
+                        memoria=memoria,
+                        show_routing=False,
+                        unattended=True,
+                    )
+                    mgr.mark_run(job.job_id, result=response)
+                    render_success(f"🔔 Cron Job Completed: {job.job_id}")
+                except Exception as exc:
+                    render_error(f"Cron job {job.job_id} failed: {exc}")
+    except asyncio.CancelledError:
+        pass
     except Exception:
         pass
     finally:
@@ -944,21 +955,111 @@ async def handle_command(
     elif command == "/cron":
         mgr = CronManager()
         sub = parts[1].lower() if len(parts) > 1 else ""
+
         if sub == "list" or not sub:
             render_cron_list(mgr.list_all())
+
+        elif sub == "add":
+            # /cron add <type> <svalue> <prompt...>
+            scmd = cmd.strip()
+            try:
+                import shlex
+                all_parts = shlex.split(scmd)
+            except Exception:
+                # If shlex fails (like unclosed quotes if user hit Enter too early),
+                # fallback to just splitting the whole string by spaces
+                all_parts = scmd.split()
+
+            if len(all_parts) < 4:  # /cron, add, type, val (prompt can be missing here but we check it below)
+                render_error(
+                    "Usage: /cron add <type> <time> <prompt>",
+                    hint="Types: once | daily | weekly  —  Time: HH:MM or ISO datetime",
+                )
+            else:
+                stype  = all_parts[2].lower()
+                svalue = all_parts[3].strip("'\"")
+                # Prompt starts at index 4. Join the rest.
+                prompt_text = " ".join(all_parts[4:]).strip("'\" ")
+
+                if stype not in ("once", "daily", "weekly"):
+                    render_error(f"Invalid schedule type '{stype}'.", hint="Use: once, daily, or weekly")
+                elif not prompt_text.strip():
+                    render_error("Prompt cannot be empty.")
+                else:
+                    job = mgr.add_job(
+                        prompt=prompt_text.strip(),
+                        schedule_type=stype,
+                        schedule_value=svalue,
+                        session_id=session.session_id,
+                    )
+                    
+                    next_run_dt = datetime.fromisoformat(job.next_run) if job.next_run else None
+                    tomorrow_hint = ""
+                    if stype == "once" and next_run_dt and next_run_dt.date() > _now().date():
+                        tomorrow_hint = "\n[warning]⚠️  Time has already passed today; scheduled for TOMORROW.[/warning]"
+
+                    render_success(
+                        f"✅ Cron job added!\n"
+                        f"   ID: [highlight]{job.job_id}[/highlight]  |  "
+                        f"{stype} @ {svalue}{tomorrow_hint}\n"
+                        f"   Next run: {(job.next_run or '—')[:16].replace('T', ' ')}"
+                    )
+
+        elif sub == "search":
+            if len(parts) < 3:
+                render_error("Usage: /cron search <query>")
+            else:
+                query = " ".join(parts[2:])
+                results = mgr.search_jobs(query)
+                if results:
+                    render_success(f"🔍 Found {len(results)} cron job(s) matching '{query}'.")
+                    render_cron_list(results)
+                else:
+                    render_warning(f"No cron jobs matching '{query}'.")
+
+        elif sub in ("run", "exec"):
+            # /cron run <job_id>  — force-run a specific job immediately
+            if len(parts) < 3:
+                render_error("Usage: /cron run <job_id>")
+            else:
+                job_id = parts[2]
+                found = mgr.get_job(job_id)
+                if not found:
+                    render_error(f"Cron job '{job_id}' not found.")
+                else:
+                    render_success(f"⚡ Running cron job '{found.job_id}' now…")
+                    _j_session = (
+                        Session.load(found.session_id)
+                        if found.session_id else Session(title=f"Cron: {found.job_id}")
+                    ) or Session(title=f"Cron: {found.job_id}")
+                    _j_scratchpad = Scratchpad(_j_session.session_id)
+                    _j_user_id = _get_memory_user_id()
+                    _j_memoria = Memoria(_j_user_id, _j_session.session_id, api_client, _config)
+                    response, _ = await run_agent_turn(
+                        user_input=found.prompt,
+                        session=_j_session,
+                        api_client=api_client,
+                        scratchpad=_j_scratchpad,
+                        memoria=_j_memoria,
+                        show_routing=False,
+                        unattended=False,
+                    )
+                    mgr.mark_run(found.job_id, result=response)
+                    render_success(f"✅ Job '{found.job_id}' executed and marked as run.")
+
         elif sub == "view":
             if len(parts) < 3:
                 render_error("Usage: /cron view <job_id>")
             else:
                 job_id = parts[2]
-                all_jobs = mgr.list_all()
-                found = next((j for j in all_jobs if j.job_id == job_id), None)
+                found = mgr.get_job(job_id)
                 if found:
                     from .ui import render_cron_result
                     render_cron_result(found)
                 else:
                     render_error(f"Cron job '{job_id}' not found.")
-        elif sub == "rm" or sub == "delete":
+
+        elif sub in ("rm", "delete", "del"):
             if len(parts) < 3:
                 render_error("Usage: /cron rm <job_id>")
             else:
@@ -966,6 +1067,7 @@ async def handle_command(
                     render_success(f"🗑️  Cron job '{parts[2]}' removed.")
                 else:
                     render_error(f"Cron job '{parts[2]}' not found.")
+
         else:
             render_cron_list(mgr.list_all())
 
@@ -2115,7 +2217,7 @@ def cron() -> None:
     pass
 
 
-@cron.command()
+@cron.command(name="list")
 def cron_list() -> None:
     """List all scheduled cron jobs."""
     mgr = CronManager()
@@ -2123,12 +2225,42 @@ def cron_list() -> None:
 
 
 @cron.command()
+@click.argument("schedule_type", type=click.Choice(["once", "daily", "weekly"], case_sensitive=False))
+@click.argument("schedule_value")
+@click.argument("prompt", nargs=-1, required=True)
+def add(schedule_type: str, schedule_value: str, prompt: tuple) -> None:
+    """Add a new cron job.
+
+    \b
+    SCHEDULE_TYPE: once | daily | weekly
+    SCHEDULE_VALUE: HH:MM (24h format) or ISO datetime for 'once'
+    PROMPT: The task description the agent should perform
+
+    \b
+    Examples:
+      cowork cron add daily 09:00 Send me a weather briefing
+      cowork cron add once 2026-03-01T08:00 Remind me to review Q1 goals
+    """
+    mgr = CronManager()
+    prompt_text = " ".join(prompt)
+    job = mgr.add_job(
+        prompt=prompt_text,
+        schedule_type=schedule_type.lower(),
+        schedule_value=schedule_value,
+    )
+    render_success(
+        f"✅ Cron job added!\n"
+        f"   ID: {job.job_id}  |  {schedule_type} @ {schedule_value}\n"
+        f"   Next run: {(job.next_run or '—')[:16].replace('T', ' ')}"
+    )
+
+
+@cron.command()
 @click.argument("job_id")
 def view(job_id: str) -> None:
-    """View details and last result of a cron job."""
+    """View details and last result of a cron job (supports partial ID)."""
     mgr = CronManager()
-    all_jobs = mgr.list_all()
-    found = next((j for j in all_jobs if j.job_id == job_id), None)
+    found = mgr.get_job(job_id)
     if found:
         from .ui import render_cron_result
         render_cron_result(found)
@@ -2139,7 +2271,7 @@ def view(job_id: str) -> None:
 @cron.command()
 @click.argument("job_id")
 def rm(job_id: str) -> None:
-    """Remove a scheduled cron job."""
+    """Remove a scheduled cron job (supports partial ID)."""
     mgr = CronManager()
     if mgr.remove_job(job_id):
         render_success(f"🗑️  Removed cron job: {job_id}")
@@ -2148,9 +2280,64 @@ def rm(job_id: str) -> None:
 
 
 @cron.command()
+@click.argument("query")
+def search(query: str) -> None:
+    """Search cron jobs by prompt text, job ID, or schedule."""
+    mgr = CronManager()
+    results = mgr.search_jobs(query)
+    if results:
+        console.print(f"[success]🔍 {len(results)} job(s) matching '{query}':[/success]")
+        render_cron_list(results)
+    else:
+        console.print(f"[muted]No cron jobs matching '{query}'.[/muted]")
+
+
+@cron.command(name="run")
+@click.argument("job_id")
+@click.option("--interactive", is_flag=True, help="Allow firewall to prompt for confirmation")
+def run_job(job_id: str, interactive: bool) -> None:
+    """Force-run a specific cron job right now (ignores schedule)."""
+    mgr = CronManager()
+    found = mgr.get_job(job_id)
+    if not found:
+        render_error(f"Job not found: {job_id}")
+        return
+
+    console.print(f"[sentinel]⚡ Force-running job: {found.job_id}[/sentinel]")
+    console.print(f"[muted]Prompt: {found.prompt}[/muted]")
+
+    async def _run():
+        api_client = _make_api_client()
+        try:
+            session = Session.load(found.session_id) if found.session_id else Session(title=f"Cron: {found.job_id}")
+            if not session:
+                session = Session(title=f"Cron: {found.job_id}")
+
+            scratchpad = Scratchpad(session.session_id)
+            user_id = _get_memory_user_id()
+            memoria = Memoria(user_id, session.session_id, api_client, _config)
+
+            response, _ = await run_agent_turn(
+                user_input=found.prompt,
+                session=session,
+                api_client=api_client,
+                scratchpad=scratchpad,
+                memoria=memoria,
+                show_routing=False,
+                unattended=not interactive,
+            )
+            mgr.mark_run(found.job_id, result=response)
+            render_success(f"✅ Job '{found.job_id}' executed successfully.")
+        finally:
+            await api_client.close()
+
+    asyncio.run(_run())
+
+
+@cron.command(name="run-pending")
 @click.option("--interactive", is_flag=True, help="Allow firewall to prompt for confirmation")
 def run_pending(interactive: bool) -> None:
-    """Execute all pending cron jobs."""
+    """Execute all currently pending cron jobs."""
     mgr = CronManager()
     pending = mgr.get_pending_jobs()
     if not pending:
@@ -2165,12 +2352,11 @@ def run_pending(interactive: bool) -> None:
             for job in pending:
                 console.print(f"\n[sentinel]▶ Running Job: {job.job_id}[/sentinel]")
                 console.print(f"[muted]Prompt: {job.prompt}[/muted]")
-                
-                # Load or create session for the job
+
                 session = Session.load(job.session_id) if job.session_id else Session(title=f"Cron: {job.job_id}")
                 if not session:
                     session = Session(title=f"Cron: {job.job_id}")
-                
+
                 scratchpad = Scratchpad(session.session_id)
                 user_id = _get_memory_user_id()
                 memoria = Memoria(user_id, session.session_id, api_client, _config)
@@ -2184,7 +2370,7 @@ def run_pending(interactive: bool) -> None:
                     show_routing=False,
                     unattended=not interactive,
                 )
-                
+
                 mgr.mark_run(job.job_id, result=response)
                 render_success(f"✅ Job {job.job_id} completed.")
         finally:
@@ -2195,3 +2381,4 @@ def run_pending(interactive: bool) -> None:
 
 if __name__ == "__main__":
     main()
+
