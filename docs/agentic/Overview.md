@@ -58,10 +58,15 @@ graph TD
         TrustGate -->|Blocked| SkillBlocked[[SKILL BLOCKED NOTICE]]
         SkillRuntime -->|Tool filtering| Tools[🛠️ Tool Schema Loading]
         Classifier -->|Inject| Actions[⚡ Action Instructions]
+        Tools -->|tool names + context| Planner[🗺️ Planner T=0.1]
+        Planner -->|JSON plan| PlanText[[📌 EXECUTION PLAN]]
+        Planner -->|simple/1-step| PlanSkip[[⚡ No Plan - REACT directly]]
     end
 
     subgraph "Phase 3: Execution Loop (The Worker)"
         ChatPath --> Agent
+        PlanText --> Agent
+        PlanSkip --> Agent
         Tools --> Agent[🤖 General Purpose Agent]
         Actions --> Agent
         SkillMeta --> Agent
@@ -96,20 +101,21 @@ graph TD
 
 ---
 
-## 📚 Documentation Index
+## 📥 Documentation Index
 | Module | Focus | Link |
 | :--- | :--- | :--- |
 | 🔄 **Workflow** | Phase-by-phase request lifecycle | [View Workflow](./Workflow.md) |
 | 📝 **Memory** | Scratchpad & Compression logic | [View Memory](./Memory.md) |
-| 🧠 **Intelligence** | Routing & Temperature tiers | [View Intelligence](./Intelligence.md) |
+| 🧠 **Intelligence** | Routing, Planning & Temperature tiers | [View Intelligence](./Intelligence.md) |
 | 🛡️ **Operations** | Queue, Persistence & Safety | [View Operations](./Operations.md) |
 
 ---
 
-## 💎 Core Philosophical Pillars
+## 📎 Core Philosophical Pillars
 - 💰 **Context is Currency**: Don't spend tokens on raw data unless required for reasoning.
-- 🎯 **Precision over Creativity**: Logic tiers (routing, compression) run at near-zero temperature.
+- 🎯 **Precision over Creativity**: Logic tiers (routing, planning, compression) run at near-zero temperature.
 - ⚡ **Lean Orchestration**: Routing and schema loading stay minimal and task-scoped.
+- 🗺️ **Plan-then-Execute**: Multi-step tasks are first decomposed into a structured plan (T=0.1), then executed by the REACT loop — preventing reactive drift and wasted steps.
 - 💾 **Persistence & Caching**: Every job is synced to survive crashes, and user context is cached to eliminate redundant Auth round-trips.
 - 🧠 **Memory Discipline**: Only durable memories are persisted; only relevant memories are injected.
 - 🔊 **Fail Loudly & Recursively**: Errors are fed back as observations for AI self-healing.

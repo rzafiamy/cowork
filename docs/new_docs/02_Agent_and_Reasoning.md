@@ -4,12 +4,13 @@ The core loop of the Cowork Agent is the REACT execution cycle, managed by `agen
 
 ## Phases
 
-Every agent run goes through five strict phases:
+Every agent run goes through six strict phases:
 1. **Input Gatekeeper**: Checks token counts. Huge inputs are automatically saved to the session scratchpad, injecting a smaller `ref:key` to the model.
 2. **Meta-Routing + Skills (The Brain)**: Triage step at Temp 0.0 to decide tool categories, then trust-gated skill activation (`SKILL.md`) for progressive instruction loading.
-3. **REACT Loop (The Worker)**: Repeated Reason $\rightarrow$ Act cycle using Temp 0.4.
-4. **Context Compression**: Map-Reduce summarization when the context gets too big.
-5. **Memory Ingestion**: Durable-turn-only extraction of long-term facts for personalized response later.
+3. **Plan-then-Execute (Phase 2.5)**: Before the REACT loop, a dedicated **Planner model** call runs at Temp 0.1 to produce a structured JSON execution plan (`goal`, `complexity`, ordered `steps` with `tool`, `rationale`, `expected_output`, `depends_on`, `can_parallelize`). The plan is injected as `[EXECUTION PLAN]` into the system prompt and persisted in scratchpad. Skipped automatically for conversational turns and simple single-step tasks.
+4. **REACT Loop (The Worker)**: Repeated Reason $\rightarrow$ Act cycle using Temp 0.4, guided by the `[EXECUTION PLAN]`.
+5. **Context Compression**: Map-Reduce summarization when the context gets too big.
+6. **Memory Ingestion**: Durable-turn-only extraction of long-term facts for personalized response later.
 
 ## REACT Loop Details
 

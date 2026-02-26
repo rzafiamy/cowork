@@ -17,7 +17,7 @@ from typing import Any, Callable, Optional
 
 from .api_client import APIClient, APIError
 from .config import AgentJob, ConfigManager, FirewallManager, FirewallAction, JobManager, Scratchpad, Session
-from .prompts import AGENT_CHAT_SYSTEM_PROMPT, AGENT_SYSTEM_PROMPT, COMPRESS_PROMPT, SESSION_RE_TITLE_PROMPT
+from .prompts import AGENT_CHAT_SYSTEM_PROMPT, AGENT_SYSTEM_PROMPT, COMPRESS_PROMPT, PLANNER_SYSTEM_PROMPT, SESSION_RE_TITLE_PROMPT
 from .memoria import Memoria
 from .issues import IssueManager
 from .router import MetaRouter
@@ -402,6 +402,106 @@ class GeneralPurposeAgent:
         except Exception:
             return "(scratchpad unavailable)"
 
+    # ── Plan Phase (Phase 2.5: Plan-then-Execute) ────────────────────────────────
+
+    async def _plan_phase(
+        self,
+        user_input: str,
+        tools_schema: list[dict],
+        memory_context: str,
+        scratchpad_index: str,
+    ) -> tuple[str, dict | None]:
+        """
+        Phase 2.5: Plan-then-Execute (Plan-and-Act, Erdogan et al. 2025).
+        Generates a structured high-level plan BEFORE the REACT loop.
+        Returns (plan_injection_text, plan_dict | None).
+
+        Skipped when:
+        - No tools available (conversational turns)
+        - plan_then_execute disabled in config
+        - LLM call fails (graceful degradation to direct REACT)
+        """
+        if not self.config.get("plan_then_execute", True):
+            return "(Plan phase disabled — executing directly)", None
+
+        if not tools_schema:
+            return "(No tools available — CONVERSATIONAL mode, no plan needed)", None
+
+        tool_names = ", ".join(
+            t.get("function", {}).get("name", "") for t in tools_schema
+        ) or "(none)"
+
+        planner_prompt = PLANNER_SYSTEM_PROMPT.format(
+            user_request=user_input,
+            tool_names=tool_names,
+            memory_context=(memory_context or "(none)")[:600],
+            scratchpad_index=(scratchpad_index or "(empty)")[:400],
+        )
+
+        try:
+            plan_result = await self.api_client.chat(
+                messages=[
+                    {"role": "system", "content": planner_prompt},
+                    {"role": "user", "content": user_input},
+                ],
+                model=self.config.get("model_planner") or self.config.get("model_router"),
+                temperature=0.1,
+                response_format={"type": "json_object"},
+                max_tokens=600,
+            )
+            raw = plan_result.get("content", "").strip()
+            self.trace_cb("plan_phase_raw", {"raw": raw})
+
+            plan: dict = json.loads(raw)
+            steps = plan.get("steps", [])
+            complexity = plan.get("complexity", "moderate")
+            goal = plan.get("goal", "")
+
+            # If the planner decided this is simple (direct_answer), skip injecting plan
+            if (
+                complexity == "simple"
+                and len(steps) == 1
+                and steps[0].get("tool") == "direct_answer"
+            ):
+                return "(Simple request — no multi-step plan required)", plan
+
+            # Build a human-readable plan block for the executor's system prompt
+            lines = [
+                "[EXECUTION PLAN]",
+                f"Goal: {goal}",
+                f"Complexity: {complexity}",
+                "",
+                "Steps to execute (follow this order unless a step's dependency fails):",
+            ]
+            for s in steps:
+                deps = f" (after step{'s' if len(s.get('depends_on', [])) > 1 else ''} {s['depends_on']})" if s.get("depends_on") else ""
+                parallel = " ║ PARALLELIZABLE" if s.get("can_parallelize") else ""
+                lines.append(
+                    f"  Step {s['id']}: [{s.get('tool', '?')}] {s.get('action', '')} — ✏ {s.get('rationale', '')}{deps}{parallel}"
+                )
+            lines.append("")
+            lines.append("On each REACT step, tick off the completed plan step and proceed to the next.")
+            plan_text = "\n".join(lines)
+
+            # Persist plan to scratchpad for cross-turn continuity
+            try:
+                self.scratchpad.save(
+                    "current_execution_plan",
+                    json.dumps(plan, ensure_ascii=False, indent=2),
+                    description=f"Execution plan: {goal[:80]}",
+                )
+            except Exception:
+                pass
+
+            self.trace_cb("plan_phase_done", {"goal": goal, "complexity": complexity, "steps": len(steps)})
+            return plan_text, plan
+
+        except Exception as exc:
+            self.trace_cb("plan_phase_error", {"error": str(exc)})
+            # Graceful degradation: REACT loop runs without a plan
+            return "(Plan generation skipped — executing directly in REACT mode)", None
+
+
     def _assess_tool_result(self, tool_name: str, result: str) -> dict[str, str]:
         """
         Produce a compact, model-friendly assessment for a tool output.
@@ -702,7 +802,30 @@ class GeneralPurposeAgent:
         multimodal_tool_names = {"image_generate", "speech_to_text", "text_to_speech", "vision_analyze"}
         multimodal_allowed = ("MULTIMODAL_TOOLS" in categories) or ("ALL_TOOLS" in categories)
 
-        # ── Build System Prompt ───────────────────────────────────────────────
+        # ── Phase 2.5: Plan-then-Execute ─────────────────────────────────────────
+        execution_plan_text = "(Plan phase not applicable for this turn)"
+        if "CONVERSATIONAL_ONLY" not in categories and not action_mode:
+            self.status_cb("🗺️  Phase 2.5 · Planning execution strategy...")
+            scratchpad_idx_for_plan = self._build_scratchpad_index()
+            execution_plan_text, _plan_dict = await self._plan_phase(
+                user_input=processed_input,
+                tools_schema=tools_schema,
+                memory_context=memory_context,
+                scratchpad_index=scratchpad_idx_for_plan,
+            )
+            if _plan_dict:
+                goal = _plan_dict.get("goal", "")
+                complexity = _plan_dict.get("complexity", "?")
+                n_steps = len(_plan_dict.get("steps", []))
+                self.status_cb(f"🧩  Plan ready: {n_steps} step(s), complexity={complexity}")
+                self.trace_cb(
+                    "plan_phase_summary",
+                    {"goal": goal, "complexity": complexity, "n_steps": n_steps, "plan_text": execution_plan_text},
+                )
+                # Expose plan on job so the UI layer can render it
+                job.plan_dict = _plan_dict
+
+        # ── Build System Prompt ──────────────────────────────────────────────────
         current_dt = dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %z")
         # ── Build Consolidated System Prompt ──────────────────────────────────
         skill_toc = self.skill_runtime.build_metadata_toc()
@@ -727,6 +850,7 @@ class GeneralPurposeAgent:
                 skill_context=skill_context,
                 skill_toc=skill_toc,
                 tool_contract=tool_contract,
+                execution_plan=execution_plan_text,
             )
 
         # ── Build Message List ────────────────────────────────────────────────

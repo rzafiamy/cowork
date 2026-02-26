@@ -72,6 +72,7 @@ from .ui import (
     render_memory_search_results,
     render_memory_status,
     render_response,
+    render_plan_info,
     render_routing_info,
     render_skill_info,
     render_session_list,
@@ -335,6 +336,11 @@ async def run_agent_turn(
 
         if not unattended:
             spinner.stop()
+
+        # Show plan info if available (Phase 2.5 output)
+        plan_dict = getattr(job, "plan_dict", None)
+        if show_routing and plan_dict and plan_dict.get("steps"):
+            render_plan_info(plan_dict)
 
         # Show routing info if available
         if show_routing and routing_info:

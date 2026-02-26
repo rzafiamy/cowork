@@ -184,8 +184,22 @@ class MetaRouter:
 
         return None
 
+    def _extract_current_message(self, prompt: str) -> str:
+        """
+        When a [SESSION CONTEXT: ...] prefix was prepended (follow-up routing),
+        extract ONLY the current user message to avoid scoring on prior assistant
+        response text (which can contain domain keywords that corrupt classification).
+        """
+        if prompt.startswith("[SESSION CONTEXT:"):
+            marker = "Current user message:"
+            idx = prompt.find(marker)
+            if idx != -1:
+                return prompt[idx + len(marker):].strip()
+        return prompt
+
     def _weather_intent(self, prompt: str) -> bool:
-        p = (prompt or "").lower()
+        # Use current message only — session context may contain unrelated keywords
+        p = self._extract_current_message(prompt).lower()
         return any(w in p for w in [
             "weather", "forecast", "temperature", "rain", "snow", "wind", "storm",
             "météo", "meteo", "prévision", "température", "pluie", "neige", "vent", "orage",
@@ -193,7 +207,8 @@ class MetaRouter:
 
     def _supabase_intent(self, prompt: str) -> bool:
         """Detect obvious diary / calendar / kanban / notes intent."""
-        p = (prompt or "").lower()
+        # Use current message only — past assistant turns pollute keyword matching
+        p = self._extract_current_message(prompt).lower()
         return any(w in p for w in [
             # Calendar / Diary
             "calendar", "diary", "event", "meeting", "appointment", "schedule",
@@ -234,11 +249,16 @@ class MetaRouter:
         Classify the user's intent.
         Returns: {"categories": [...], "confidence": float, "reasoning": str}
         """
+        # For tool-probability and fast-path decisions, score ONLY the current
+        # user message (strip the [SESSION CONTEXT: ...] prefix so prior assistant
+        # text doesn't bias the keyword scoring).
+        current_msg = self._extract_current_message(prompt)
+
         # Fast-path for small conceptual turns that are unlikely to need tools.
-        tool_probability = self._estimate_tool_probability(prompt)
-        if tool_probability < 0.2 and len(prompt.strip()) <= 220:
+        tool_probability = self._estimate_tool_probability(current_msg)
+        if tool_probability < 0.2 and len(current_msg.strip()) <= 220:
             # Safety net: don't fast-path if a clear supabase-backed intent is detected
-            if not self._supabase_intent(prompt):
+            if not self._supabase_intent(current_msg):
                 return {
                     "categories": ["CONVERSATIONAL_ONLY"],
                     "confidence": 0.9,
@@ -306,14 +326,14 @@ class MetaRouter:
                 else:
                     hint = err_msg[:80] + "..." if len(err_msg) > 80 else err_msg
 
-                res = self._keyword_fallback(prompt)
+                res = self._keyword_fallback(current_msg)
                 res["tool_probability"] = tool_probability
-                if tool_probability < 0.2 and not self._supabase_intent(prompt):
+                if tool_probability < 0.2 and not self._supabase_intent(current_msg):
                     res["categories"] = ["CONVERSATIONAL_ONLY"]
                     res["reasoning"] = "Calibrated to conversational-only after LLM routing failure."
                 else:
                     res["reasoning"] = f"Keyword-based fallback (LLM routing failed: {hint})"
-                res["categories"] = self._postprocess_categories(prompt, res.get("categories", []), domains)
+                res["categories"] = self._postprocess_categories(current_msg, res.get("categories", []), domains)
                 return res
 
         # Guard: if router output was truncated, retry once with a compact-output nudge.
@@ -358,7 +378,7 @@ class MetaRouter:
 
             # If still empty after normalization, use keyword fallback before ALL_TOOLS.
             if not valid:
-                fallback = self._keyword_fallback(prompt).get("categories", [])
+                fallback = self._keyword_fallback(current_msg).get("categories", [])
                 for c in fallback:
                     normalized = self._normalize_category(c, domains)
                     if normalized and normalized not in seen:
@@ -372,7 +392,7 @@ class MetaRouter:
             if any(c in valid for c in ["NEWS_TOOLS", "WEATHER_TOOLS", "WEB_TOOLS"]):
                 if "SEARCH_TOOLS" not in valid:
                     valid.append("SEARCH_TOOLS")
-            valid = self._postprocess_categories(prompt, valid, domains)
+            valid = self._postprocess_categories(current_msg, valid, domains)
 
             routed = {
                 "categories": valid,
@@ -380,20 +400,20 @@ class MetaRouter:
                 "reasoning": parsed.get("reasoning", ""),
             }
             routed["tool_probability"] = tool_probability
-            if routed["tool_probability"] < 0.2 and not self._supabase_intent(prompt):
+            if routed["tool_probability"] < 0.2 and not self._supabase_intent(current_msg):
                 routed["categories"] = ["CONVERSATIONAL_ONLY"]
                 routed["reasoning"] = "Calibrated to conversational-only (low tool-need probability)."
             return routed
         except Exception as e:
             # JSON parse failed — fall back to keyword routing
-            res = self._keyword_fallback(prompt)
+            res = self._keyword_fallback(current_msg)
             res["tool_probability"] = tool_probability
-            if tool_probability < 0.2 and not self._supabase_intent(prompt):
+            if tool_probability < 0.2 and not self._supabase_intent(current_msg):
                 res["categories"] = ["CONVERSATIONAL_ONLY"]
                 res["reasoning"] = "Calibrated to conversational-only after fallback."
             else:
                 res["reasoning"] = f"Keyword-based fallback (JSON parse error: {e})"
-            res["categories"] = self._postprocess_categories(prompt, res.get("categories", []), domains)
+            res["categories"] = self._postprocess_categories(current_msg, res.get("categories", []), domains)
             return res
 
     def _keyword_fallback(self, prompt: str) -> dict:

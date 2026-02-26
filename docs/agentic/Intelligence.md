@@ -60,11 +60,40 @@ Precision is balanced with creativity through a tiered temperature strategy:
 | 🌡️ Tier | Applying To | 🎯 Objective |
 | :--- | :--- | :--- |
 | **0.0** | Meta-Routing, JSON Schema | **Max Precision**: Deterministic & Structured. |
-| **0.1** | Context Compression | **Factual Integrity**: Preserve entities & facts. |
+| **0.1** | **Planner (Phase 2.5)**, Context Compression | **Factual Integrity**: Deterministic plan structures and factual summaries. |
 | **0.4** | Main Agent REACT Loop | **Balanced Logic**: Goal-oriented reasoning. |
 | **0.7** | Chat & Session Titling | **Human Voice**: Engaging & creative tone. |
 
 ---
+
+## 🗺️ Plan-then-Execute (Phase 2.5)
+Inspired by **Erdogan et al. 2025** (“Plan-and-Act”, ICML 2025) and **GoalAct** (2025), the system now runs a
+dedicated **Planner model** call **before** the REACT loop starts.
+
+### How It Fits the Temperature Strategy
+- **Planner** (T=0.1): Generates a deterministic, structured JSON plan — `goal`, `complexity`, ordered `steps`.
+- **Executor** (T=0.4): Follows the injected `[EXECUTION PLAN]` inside the REACT loop.
+
+### Separation of Concerns (Plan-and-Act Paradigm)
+| Role | Temperature | Responsibility |
+| :--- | :--- | :--- |
+| **Planner** | 0.1 | Decomposes goal → ordered steps. Outputs JSON. |
+| **Executor (REACT)** | 0.4 | Translates plan steps → tool calls + reasoning. |
+| **Compressor** | 0.1 | Summarizes history when context is full. |
+| **Router** | 0.0 | Classifies intent → tool categories. |
+
+### Bypass Conditions
+The planner is **skipped** (no latency hit) when:
+- Turn is `CONVERSATIONAL_ONLY`
+- `action_mode` is active (intent already known)
+- Config has `plan_then_execute: false`
+- Planner determines `complexity: simple` with a `direct_answer` step
+
+### Config Key
+```yaml
+plan_then_execute: true    # default; set false to revert to pure REACT
+model_planner: ""          # defaults to model_router if not set
+```
 
 ## ⚡ Active Action Mode (Fast-Track)
 When a user clicks a **Workflow Pill** or triggers a command:

@@ -22,6 +22,32 @@ This document traces the path of a user request from the moment it leaves the ke
     *   Enforces 10-job concurrency limit.
     *   💾 **Syncs to `~/.cowork/jobs.json`** for crash survival.
 
+## 🟤 Phase 2.5: Plan-then-Execute (The Planner)
+*Components: `cli/cowork/agent.py` (`GeneralPurposeAgent._plan_phase`) ➝ `cli/cowork/prompts.py` (`PLANNER_SYSTEM_PROMPT`)*
+
+> **Inspired by**: Erdogan et al. 2025 — *"Plan-and-Act: Improving Planning of Agents for Long-Horizon Tasks"* (ICML 2025, arXiv:2503.xxxxx); GoalAct (arXiv 2504.xxxxx, 2025); “Plan-Then-Execute: An Empirical Study of User Trust” (arXiv 2502.01xxx, 2025).
+
+Before the REACT loop begins, a lightweight **Planner LLM call** runs at **Temp 0.1** to generate a structured, high-level execution plan:
+
+1.  **🧠 Plan Generation** (T=0.1, JSON output):
+    *   Receives: user request, available tool names, memory context, scratchpad state.
+    *   Produces a JSON plan: `goal`, `complexity` (simple / moderate / complex), and an ordered list of `steps`.
+    *   Each step has: `tool`, `action`, `rationale`, `expected_output`, `depends_on`, `can_parallelize`.
+2.  **⚡ Bypass Conditions** (no extra latency when skipped):
+    *   `CONVERSATIONAL_ONLY` turns — no plan needed.
+    *   `action_mode` fast-track — intent already known.
+    *   `plan_then_execute: false` in config — reverts to pure REACT.
+    *   Planner decides `complexity: simple` with a single `direct_answer` step — injects "no plan needed" sentinel.
+3.  **📌 Plan Injection**: The plan is rendered as a `[EXECUTION PLAN]` block injected into the agent system prompt — every REACT step sees the strategic roadmap.
+4.  **💾 Plan Persistence**: The JSON plan is saved to `scratchpad["current_execution_plan"]` for cross-turn continuity.
+5.  **🛡️ Graceful Degradation**: If the planner LLM call fails, the agent silently falls back to the standard pure-REACT mode without surfacing the error to the user.
+
+### Why This Matters
+- **Fixes reactive drift**: Without a plan, the REACT loop can wander, waste steps, or get stuck in local minima.
+- **Improves step budget efficiency**: The executor knows what remains, preventing redundant tool calls.
+- **Better parallelism**: `can_parallelize` hints allow the executor to batch independent steps.
+- **User trust**: The plan is visible in the trace viewer, so users can verify the strategy before execution.
+
 ## 🔵 Phase 3: The Brain (Meta-Routing)
 *Components: `cli/cowork/agent.py` ⮕ `cli/cowork/router.py` ⮕ `cli/cowork/skills/runtime.py`*
 

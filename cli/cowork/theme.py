@@ -141,7 +141,9 @@ OP_DEFAULTS = {
     "memory_high_similarity_bypass": 0.4,
     "memory_kg_limit_triplets":   100,
     "temperature_router":         0.0,
+    "temperature_planner":        0.1,   # Plan-then-Execute: deterministic planning
     "temperature_compress":       0.1,
     "temperature_agent":          0.4,
     "temperature_chat":           0.7,
+    "plan_then_execute":          True,  # Enable Plan-then-Execute phase (disable for pure REACT)
 }

@@ -338,6 +338,71 @@ def render_skill_info(name: str, score: float, tier: int, description: str = "",
     ))
 
 
+def render_plan_info(plan: dict) -> None:
+    """
+    Render the Plan-then-Execute plan as a rich panel.
+    Called after Phase 2.5 completes, before the REACT loop starts.
+    """
+    if not plan:
+        return
+
+    goal = plan.get("goal", "")
+    complexity = plan.get("complexity", "?")
+    steps = plan.get("steps", [])
+
+    # If the planner decided it's a direct/simple answer, show a lean one-liner
+    if not steps or (len(steps) == 1 and steps[0].get("tool") == "direct_answer"):
+        console.print(
+            f"  [dim_text]🗺️  Planner: direct answer — no multi-step plan needed[/dim_text]"
+        )
+        return
+
+    complexity_color = {
+        "simple": "success",
+        "moderate": "accent",
+        "complex": "error",
+    }.get(complexity, "accent")
+
+    # Build step tree
+    tree = Tree(
+        Text.from_markup(
+            f"[accent]🗺️  Execution Plan[/accent]  "
+            f"[dim_text]complexity=[/dim_text][{complexity_color}]{complexity}[/{complexity_color}]"
+        )
+    )
+    for s in steps:
+        tool_name = s.get("tool", "?")
+        action = s.get("action", "")
+        rationale = s.get("rationale", "")
+        deps = s.get("depends_on", [])
+        parallel = s.get("can_parallelize", False)
+
+        tool_tag = f"[tool]{tool_name}[/tool]" if tool_name not in ("reasoning", "direct_answer") else f"[muted]{tool_name}[/muted]"
+        dep_txt = f" [dim_text](after {deps})[/dim_text]" if deps else ""
+        par_txt = " [secondary]‖[/secondary]" if parallel else ""
+
+        branch = tree.add(
+            Text.from_markup(
+                f"[dim_text]{s.get('id','?')}.[/dim_text] {tool_tag} [bold_white]{action[:70]}[/bold_white]{dep_txt}{par_txt}"
+            )
+        )
+        if rationale:
+            branch.add(Text.from_markup(f"[italic_muted]↳ {rationale[:90]}[/italic_muted]"))
+
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="muted", justify="right", width=10)
+    grid.add_column()
+    grid.add_row("Goal", f"[bold_white]{goal[:100]}[/bold_white]")
+    grid.add_row("Steps", f"[accent]{len(steps)}[/accent]")
+
+    console.print(Panel(
+        Group(grid, Rule(style="accent"), tree),
+        title="[accent]🗺️  Phase 2.5 · Plan-then-Execute[/accent]",
+        border_style="accent",
+        padding=(0, 1),
+    ))
+
+
 # ─── Session List ─────────────────────────────────────────────────────────────
 
 def render_session_list(sessions: list[dict]) -> None:
