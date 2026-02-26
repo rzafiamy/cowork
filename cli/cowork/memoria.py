@@ -127,12 +127,61 @@ class _LocalEmbedder:
         if _LocalEmbedder._available is not None:
             return
         try:
-            from sentence_transformers import SentenceTransformer  # type: ignore
-            _LocalEmbedder._model = SentenceTransformer(
-                "all-MiniLM-L6-v2",
-                device="cpu",
-            )
-            _LocalEmbedder._available = True
+            import os
+            import logging as _logging
+
+            # ── 1. Prevent CUDA lib loading ────────────────────────────────────
+            # Even with device="cpu", PyTorch initialises CUDA on import (probes
+            # for GPUs) which loads libcublas, libtriton, libnvJitLink, etc.
+            # CUDA_VISIBLE_DEVICES="" hides all devices before torch is imported.
+            _cuda_key = "CUDA_VISIBLE_DEVICES"
+            _cuda_restore = os.environ.get(_cuda_key, _sentinel := object())
+            if _cuda_restore is _sentinel:
+                os.environ[_cuda_key] = ""
+
+            # ── 2. Silence transformers weight-load noise ───────────────────────
+            # TRANSFORMERS_VERBOSITY is read at import time by transformers.logging,
+            # so it must be set before `from sentence_transformers import ...`.
+            # HF_HUB_DISABLE_PROGRESS_BARS suppresses the tqdm "Loading weights" bar.
+            _tv_key  = "TRANSFORMERS_VERBOSITY"
+            _hf_key  = "HF_HUB_DISABLE_PROGRESS_BARS"
+            _tok_key = "TOKENIZERS_PARALLELISM"
+            _tv_restore  = os.environ.get(_tv_key,  _sentinel)
+            _hf_restore  = os.environ.get(_hf_key,  _sentinel)
+            _tok_restore = os.environ.get(_tok_key, _sentinel)
+            if _tv_restore  is _sentinel: os.environ[_tv_key]  = "error"
+            if _hf_restore  is _sentinel: os.environ[_hf_key]  = "1"
+            if _tok_restore is _sentinel: os.environ[_tok_key] = "false"
+
+            try:
+                from sentence_transformers import SentenceTransformer  # type: ignore
+
+                # Fine-grained silencing after the import (belt-and-suspenders):
+                # disable_progress_bar() mutes the "Loading weights: 0%|..." bar,
+                # set_verbosity_error() mutes "BertModel LOAD REPORT" and similar.
+                try:
+                    import transformers as _tf
+                    _tf.logging.set_verbosity_error()
+                    _tf.logging.disable_progress_bar()
+                except Exception:
+                    pass
+                # Also cap the sentence_transformers and huggingface_hub loggers
+                for _lgr in ("sentence_transformers", "huggingface_hub", "transformers"):
+                    _logging.getLogger(_lgr).setLevel(_logging.ERROR)
+
+                _LocalEmbedder._model = SentenceTransformer(
+                    "all-MiniLM-L6-v2",
+                    device="cpu",
+                )
+                _LocalEmbedder._available = True
+            finally:
+                # Restore env vars so we don't interfere with the rest of the app
+                for _k, _r in [(_cuda_key, _cuda_restore), (_tv_key,  _tv_restore),
+                                (_hf_key,  _hf_restore),  (_tok_key, _tok_restore)]:
+                    if _r is _sentinel:
+                        os.environ.pop(_k, None)
+                    # else: was explicitly set by user — leave it
+
         except ImportError:
             _LocalEmbedder._available = False
         except Exception:
@@ -275,8 +324,18 @@ class Memoria:
         self.kg_limit = config.get("memory_kg_limit_triplets", OP_DEFAULTS["memory_kg_limit_triplets"])
 
         self._db, self._vec_available = _open_db()
-        self._embedder = _LocalEmbedder.get()
+        # Embedder is loaded lazily on first encode() — avoids pulling the full
+        # sentence-transformers + PyTorch stack into memory at session startup.
+        self._embedder: Optional[_LocalEmbedder] = None
+        self._embedder_loaded = False
         self._summary: str = self._load_summary()
+
+    def _get_embedder(self) -> Optional["_LocalEmbedder"]:
+        """Lazily load the embedder on first call to avoid startup overhead."""
+        if not self._embedder_loaded:
+            self._embedder = _LocalEmbedder.get()
+            self._embedder_loaded = True
+        return self._embedder
 
     # ── Storage helpers ───────────────────────────────────────────────────────
 
@@ -376,7 +435,7 @@ class Memoria:
           3. Keyword overlap — always available as final fallback
         """
         now = datetime.utcnow()
-        query_vec = self._embedder.encode(query) if self._embedder else None
+        query_vec = self._get_embedder().encode(query) if self._get_embedder() else None
 
         # 1. Attempt sqlite-vec search first (efficient for scale)
         if query_vec and self._vec_available:
@@ -681,8 +740,8 @@ class Memoria:
                 triplet_text = f"{subj} {pred} {obj}"
 
                 embedding: Optional[bytes] = None
-                if self._embedder:
-                    embedding = self._embedder.encode(triplet_text)
+                if self._get_embedder():
+                    embedding = self._get_embedder().encode(triplet_text)
 
                 self._db.execute(
                     """INSERT INTO kg_triplets
@@ -760,8 +819,8 @@ class Memoria:
 
                     # Generate local embedding (None if deps unavailable)
                     embedding: Optional[bytes] = None
-                    if self._embedder:
-                        embedding = self._embedder.encode(triplet_text)
+                    if self._get_embedder():
+                        embedding = self._get_embedder().encode(triplet_text)
 
                     self._db.execute(
                         """INSERT OR IGNORE INTO kg_triplets
@@ -825,8 +884,8 @@ class Memoria:
         triplet_text = f"{subject} {predicate} {object_}"
 
         embedding: Optional[bytes] = None
-        if self._embedder:
-            embedding = self._embedder.encode(triplet_text)
+        if self._get_embedder():
+            embedding = self._get_embedder().encode(triplet_text)
 
         self._db.execute(
             """INSERT INTO kg_triplets
@@ -895,7 +954,7 @@ class Memoria:
 
     def is_semantic_search_available(self) -> bool:
         """True if BOTH local embeddings AND vector DB extension are active."""
-        return self._embedder is not None and self._vec_available
+        return self._get_embedder() is not None and self._vec_available
 
     def clear_session(self) -> None:
         """Clear session summary (keep KG)."""
