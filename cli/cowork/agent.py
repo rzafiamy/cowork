@@ -984,7 +984,7 @@ class GeneralPurposeAgent:
                         {"step": step + 1, "tool_calls": tool_calls, "attempt": disallowed_tool_attempts},
                     )
                     messages.append({
-                        "role": "system",
+                        "role": "user",
                         "content": (
                             "[SYSTEM NOTICE] Tool calls were requested but no tools are allowed this turn. "
                             "Do not call tools. Provide a direct answer or ask a clarification question."
@@ -1054,7 +1054,7 @@ class GeneralPurposeAgent:
                         )
                         if disallowed_tool_attempts >= 2:
                             messages.append({
-                                "role": "system",
+                                "role": "user",
                                 "content": (
                                     "[SYSTEM NOTICE] You are repeatedly requesting disallowed tools. "
                                     "Stop calling tools not in the contract and answer using allowed tools only."
@@ -1148,7 +1148,7 @@ class GeneralPurposeAgent:
                     assessments.append(self._assess_tool_result(tool_name, tool_text))
 
                 reflection_note = self._build_tool_reflection_note(step + 1, assessments)
-                messages.append({"role": "system", "content": reflection_note})
+                messages.append({"role": "user", "content": reflection_note})
                 self.trace_cb(
                     "tool_reflection_note",
                     {
