@@ -434,7 +434,7 @@ class CodebaseBashTool(BaseTool):
 
     @property
     def category(self) -> str:
-        return "CODING_TOOLS"
+        return "COMMAND_LINE"
 
     @property
     def parameters(self) -> Dict[str, Any]:

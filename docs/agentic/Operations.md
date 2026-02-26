@@ -67,6 +67,23 @@ These values map from `~/.cowork/config.json` to specific system behaviors:
 
 ---
 
+## 🐚 Safe Shell Execution Protocol
+To ensure total safety while providing command-line power, the following protocol is enforced for the `commandline-tools` skill:
+
+### 📑 1. Intent & Categorization
+AI must provide a risk-aware summary before execution using these labels:
+- 🔴 **DANGEROUS**: High risk (destructive/system-wide). Requires backup details and recovery hints.
+- ⚠️ **WARNING**: Moderate risk (state changes/resource-heavy).
+- ✅ **SAFE**: Low risk (read-only/checks).
+
+### 🛡️ 2. Firewall Transparency
+All commands are blocked by the **Firewall "Ask" Rule** by default. AI avoids redundant textual confirmation prompts as the system-level `[Y/n]` interaction is automatically triggered.
+
+### 📝 3. Execution Summary
+Following command completion, a concise recap is provided stating the result, any system modifications, and the next logical step.
+
+---
+
 ## 🆘 Failure Propagation (Half-Halt Protocol)
 The system ensures failures are handled gracefully through an observer-pattern approach, allowing the agent to "fail-forward".
 
