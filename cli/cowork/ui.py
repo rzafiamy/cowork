@@ -113,23 +113,31 @@ def print_status(message: str, style: str = "muted") -> None:
 
 # ─── Streaming Response Renderer ──────────────────────────────────────────────
 
+import re as _re
+_TABLE_RE = _re.compile(r"([^\n])\n\|")
+
 class StreamingRenderer:
     """
     Renders streaming LLM output token-by-token with a live panel.
+    Updates are throttled to ≤8 fps to avoid burning CPU on every token.
     """
+
+    _UPDATE_INTERVAL = 0.125  # seconds (~8 fps)
 
     def __init__(self) -> None:
         self._buffer = ""
         self._live: Optional[Live] = None
         self._start_time = time.time()
+        self._last_render = 0.0
 
     def start(self) -> None:
         self._buffer = ""
         self._start_time = time.time()
+        self._last_render = 0.0
         self._live = Live(
             self._render(),
             console=console,
-            refresh_per_second=15,
+            refresh_per_second=4,
             vertical_overflow="visible",
         )
         self._live.__enter__()
@@ -137,16 +145,18 @@ class StreamingRenderer:
     def on_token(self, token: str) -> None:
         self._buffer += token
         if self._live:
-            self._live.update(self._render())
+            now = time.time()
+            if now - self._last_render >= self._UPDATE_INTERVAL:
+                self._live.update(self._render())
+                self._last_render = now
 
     def _render(self) -> Panel:
         elapsed = time.time() - self._start_time
         content = self._buffer or " "
-        # Pre-process content for better markdown table rendering
-        # Ensure tables have an empty line before them if missing
-        import re
-        content_fixed = re.sub(r"([^\n])\n\|", r"\1\n\n|", content)
-        
+        # Pre-process content for better markdown table rendering.
+        # Use the pre-compiled class-level regex — avoids re-import per call.
+        content_fixed = _TABLE_RE.sub(r"\1\n\n|", content)
+
         try:
             md = Markdown(content_fixed)
         except Exception:
@@ -162,6 +172,8 @@ class StreamingRenderer:
 
     def stop(self) -> str:
         if self._live:
+            # Final render to flush the last tokens
+            self._live.update(self._render())
             self._live.__exit__(None, None, None)
             self._live = None
         return self._buffer
@@ -207,7 +219,7 @@ class ThinkingSpinner:
         self._live = Live(
             self._render(),
             console=console,
-            refresh_per_second=10,
+            refresh_per_second=1,  # Explicit update() calls handle status changes; 1 Hz is enough for the timer counter
             transient=True,
         )
         self._live.__enter__()
@@ -243,9 +255,8 @@ def render_response(content: str, elapsed: float, tool_calls: int = 0, step_coun
         stats_parts.append(f"🔄 {step_count} step{'s' if step_count != 1 else ''}")
     stats = "  [dim_text]" + "  ·  ".join(stats_parts) + "[/dim_text]"
 
-    # Pre-process content for better markdown table rendering
-    import re
-    content_fixed = re.sub(r"([^\n])\n\|", r"\1\n\n|", content)
+    # Pre-process content for better markdown table rendering (reuse module-level compiled regex)
+    content_fixed = _TABLE_RE.sub(r"\1\n\n|", content)
 
     try:
         body = Markdown(content_fixed)
@@ -1306,8 +1317,8 @@ def _get_prompt_session() -> PromptSession:
             completer=_get_super_completer(),
             auto_suggest=AutoSuggestFromHistory(),
             style=PT_STYLE,
-            complete_while_typing=True,
-            enable_history_search=True,   # Ctrl+R incremental search
+            complete_while_typing=False,   # Only complete on Tab — avoids FTS/fuzzy on every keystroke
+            enable_history_search=True,    # Ctrl+R incremental search
             mouse_support=False,
             wrap_lines=True,
             key_bindings=kb,

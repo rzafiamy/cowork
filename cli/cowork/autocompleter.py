@@ -150,7 +150,7 @@ class SuperCompleter(Completer):
         self._load_dictionary()
 
     def _load_dictionary(self):
-        """Load the OS word dictionary for android-like autocorrect."""
+        """Load the OS word dictionary for android-like autocorrect (capped at 20k words)."""
         dict_path = Path("/usr/share/dict/words")
         if dict_path.exists():
             try:
@@ -159,6 +159,8 @@ class SuperCompleter(Completer):
                         w = line.strip().lower()
                         if len(w) >= 4 and w.isalpha():
                             self.global_dictionary.add(w)
+                        if len(self.global_dictionary) >= 20000:
+                            break
             except Exception:
                 pass
 
@@ -195,7 +197,7 @@ class SuperCompleter(Completer):
 
     def _refresh_cache(self):
         now = time.time()
-        if now - self._cache_time > 5: # refresh cache every 5s max
+        if now - self._cache_time > 30:  # refresh cache every 30s — was 5s, reduces idle timer wakeups
             self._history_cache = self.db.get_recent_history(limit=500)
             self._cache_time = now
 
@@ -222,7 +224,7 @@ class SuperCompleter(Completer):
     def _refresh_artifact_cache(self):
         """Scan all workspace session artifacts and cache filenames."""
         now = time.time()
-        if now - self._artifact_cache_time > 10:  # refresh every 10s max
+        if now - self._artifact_cache_time > 120:  # refresh every 2 min — was 10s, reduces I/O wakeups
             self._artifact_cache = []
             ws_root = Path.home() / ".cowork" / "workspace"
             if ws_root.exists():
@@ -301,50 +303,56 @@ class SuperCompleter(Completer):
         # Avoid completing single letters too aggressively unless FTS match
         if len(text) >= 2 and not is_space_end:
             seen_completions = set()
-            
+            seen_lower: set[str] = set()  # pre-computed lowercase set — avoids O(n) list rebuild per match
+
             # 3a. FTS Prefix Match
             fts_matches = self.db.search_fts(text, limit=3)
             for match in fts_matches:
                 if match not in seen_completions and match != text:
                     seen_completions.add(match)
+                    seen_lower.add(match.lower())
                     yield Completion(
                         match,
                         start_position=-len(text),
                         display=HTML(f"<ansigreen>☄ {self._esc(match)}</ansigreen>"),
                         display_meta="History"
                     )
-            
+
             # 3b. Fuzzy Typo Match
             fuzzy_matches = self._fuzzy_match(text, limit=3)
             for match in fuzzy_matches:
                 if match not in seen_completions and match != text:
                     seen_completions.add(match)
+                    seen_lower.add(match.lower())
                     yield Completion(
                         match,
                         start_position=-len(text),
                         display=HTML(f"<ansicyan>⚡ {self._esc(match)}</ansicyan>"),
                         display_meta="Fuzzy Session"
                     )
-                    
+
             # 3c. Word completion from Session Text (LLM Outputs / User inputs) priority
             if len(last_word) >= 1:
                 word_matches = [w for w in self.session_words if w.lower().startswith(last_word.lower()) and w != last_word]
                 for w in word_matches[:5]:
-                    if w.lower() not in [s.lower() for s in seen_completions]:
+                    if w.lower() not in seen_lower:
                         seen_completions.add(w)
+                        seen_lower.add(w.lower())
                         yield Completion(
                             w,
                             start_position=-len(last_word),
                             display=HTML(f"<ansimagenta>🔹 {self._esc(w)}</ansimagenta>"),
                             display_meta="Session Word"
                         )
-            
+
             # 3d. Android Keyboard-style Global Dictionary Typo Correction (Lowest Priority)
-            if len(last_word) >= 3:
+            # Only run for words >=5 chars to avoid expensive fuzzy scan on short strings.
+            if len(last_word) >= 5:
                 dict_matches = self._dict_correction(last_word, limit=3)
                 for w in dict_matches:
-                    if w.lower() not in [s.lower() for s in seen_completions] and w.lower() != last_word.lower():
+                    if w.lower() not in seen_lower and w.lower() != last_word.lower():
                         seen_completions.add(w)
+                        seen_lower.add(w.lower())
                         yield Completion(
                             w,
                             start_position=-len(last_word),

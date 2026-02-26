@@ -476,7 +476,7 @@ async def _background_cron_poll():
                 mgr.mark_run(job.job_id, result=response)
                 render_success(f"🔔 Background Job Completed: {job.job_id}")
             
-            await asyncio.sleep(60)
+            await asyncio.sleep(300)  # Poll every 5 min — was 60s; cron resolution is minutes, not seconds
     except Exception:
         pass
     finally:
