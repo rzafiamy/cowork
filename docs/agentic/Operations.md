@@ -106,3 +106,12 @@ For destructive fresh-start operations, the CLI now supports:
 - `/reset` (interactive slash command)
 
 Both clear all persisted state under `~/.cowork/*`.
+
+---
+
+## 🛡️ Firewall Management (CLI)
+For managing tool security policies directly:
+- `cowork firewall` (List current rules)
+- `cowork firewall status` (Check integrity)
+- `cowork firewall edit` (Open in default editor)
+- `cowork firewall reset` (Restore defaults)

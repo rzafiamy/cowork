@@ -177,6 +177,26 @@ cowork tokens
 cowork tokens --reset
 ```
 
+### `cowork firewall [action]`
+
+Manage the tool execution firewall rules and policy.
+
+Actions:
+
+- `list` (default): show all current rules and global policy
+- `status`: verify integrity of `firewall.yaml`
+- `edit`: open `firewall.yaml` in your default editor
+- `reset`: restore the firewall configuration to its safe defaults
+
+Examples:
+
+```bash
+cowork firewall
+cowork firewall status
+cowork firewall edit
+cowork firewall reset
+```
+
 ## 5. Tool and Profile Management
 
 ### `cowork tools`

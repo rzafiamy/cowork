@@ -1109,6 +1109,32 @@ tools:
     action: ask
     description: "Confirm before deleting a scheduled job"
 
+  # ── 🗄️  Databases & CMS (external data mutations) ────────────────────────
+  - name: "supabase_*"
+    action: ask
+    description: "Confirm before modifying data in Supabase"
+
+  - name: "nextcloud_*"
+    action: ask
+    description: "Confirm before modifying files or data in Nextcloud"
+
+  - name: "airtable_*"
+    action: ask
+    description: "Confirm before modifying data in Airtable"
+
+  - name: "notion_*"
+    action: ask
+    description: "Confirm before modifying data in Notion"
+
+  # ── 🤝 Social & Professional (public posts) ──────────────────────────────
+  - name: "linkedin_*"
+    action: ask
+    description: "Confirm before posting to LinkedIn"
+
+  - name: "twitter_*"
+    action: ask
+    description: "Confirm before posting to Twitter/X"
+
 # Blacklist: Tools that are strictly NEVER allowed
 blacklist: []
 
