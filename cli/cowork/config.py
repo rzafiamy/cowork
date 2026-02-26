@@ -990,73 +990,135 @@ class FirewallManager:
 
     def _create_default(self) -> None:
         """Initialize firewall.yaml with safe defaults."""
-        default_content = """# 🛡️ Cowork Tool Firewall
-# Use this to control which tools can run and which require user confirmation.
+        default_content = """# 🛡️  Cowork Tool Firewall
+# Controls which tools run automatically and which require user confirmation.
+# Actions: allow | ask | block
+# Patterns: exact name OR fnmatch wildcard (e.g. "git_*", "*_send_*")
 
-# Default policy: allow, block, or ask
 policy:
-  default_action: allow
+  default_action: allow   # Change to "ask" for maximum safety
 
-# Tools that ALWAYS require explicit user confirmation
 tools:
+
+  # ── 📧 Email / Messaging (irreversible external side-effects) ─────────────
   - name: gmail_send_email
     action: ask
-    description: "Prevent sending unauthorized emails via Gmail"
-  
+    description: "Confirm before sending email via Gmail"
+
   - name: smtp_send_email
     action: ask
-    description: "Prevent sending unauthorized emails via SMTP"
+    description: "Confirm before sending email via SMTP"
+    rules:
+      - field: recipient
+        regex: "^.*@(gmail\\.com|outlook\\.com|yahoo\\.com|hotmail\\.com)$"
+        action: ask
+        description: "Always confirm for common public mail providers"
 
-  - name: google_calendar_create_event
+  - name: telegram_send_message
     action: ask
-    description: "Confirm adding new events to your calendar"
+    description: "Confirm before sending Telegram message"
 
-  - name: storage_write
+  - name: slack_send_message
     action: ask
-    description: "Prevent overwriting local system files"
+    description: "Confirm before posting to Slack"
+
+  - name: whatsapp_send_message
+    action: ask
+    description: "Confirm before sending WhatsApp message"
 
   - name: twitter_post_tweet
     action: ask
-    description: "Prevent accidental public tweets"
+    description: "Confirm before posting a public tweet"
+
+  # ── 💻 Shell / Code Execution (highest risk — can run any command) ────────
+  - name: codebase_bash
+    action: ask
+    description: "Confirm before executing shell commands on the system"
+
+  # ── 📁 File System Writes (can overwrite / destroy data) ─────────────────
+  - name: codebase_write_file
+    action: ask
+    description: "Confirm before writing/overwriting a file in the codebase"
+
+  - name: workspace_write
+    action: ask
+    description: "Confirm before writing a file to the workspace"
+
+  - name: storage_write
+    action: ask
+    description: "Confirm before writing to local storage paths"
+
+  # ── 🔀 Git Mutations (modify or publish repository state) ─────────────────
+  - name: git_push
+    action: ask
+    description: "Confirm before pushing commits to a remote repository"
+
+  - name: git_commit
+    action: ask
+    description: "Confirm before creating a commit"
+
+  - name: git_clone
+    action: ask
+    description: "Confirm before cloning a repository (bandwidth + disk)"
+
+  # ── 📥 Downloads (bandwidth + disk cost, copyright risk) ─────────────────
+  - name: youtube_download
+    action: ask
+    description: "Confirm before downloading YouTube video/audio (bandwidth + copyright)"
+
+  - name: web_download_file
+    action: ask
+    description: "Confirm before downloading a file from the internet"
+
+  # ── 🎨 API-Cost Multimodal (each call costs money) ───────────────────────
+  - name: image_generate
+    action: ask
+    description: "Confirm before generating an image (costs API credits)"
+
+  - name: speech_to_text
+    action: ask
+    description: "Confirm before transcribing audio (costs API credits)"
+
+  - name: text_to_speech
+    action: ask
+    description: "Confirm before generating speech audio (costs API credits)"
+
+  - name: vision_analyze
+    action: ask
+    description: "Confirm before sending an image for vision analysis (costs API credits)"
+
+  # ── 📅 Calendar / Drive (external calendar/document mutations) ────────────
+  - name: google_calendar_create_event
+    action: ask
+    description: "Confirm adding new events to Google Calendar"
+
+  - name: google_calendar_delete_event
+    action: ask
+    description: "Confirm before deleting a calendar event"
 
   - name: google_drive_upload_text
     action: ask
-    description: "Confirm uploading documents to Google Drive"
+    description: "Confirm before uploading documents to Google Drive"
 
-  - name: firecrawl_scrape
-    action: ask
-    description: "Confirm scraping external website content"
-
-  - name: firecrawl_crawl
-    action: ask
-    description: "Confirm multi-page crawl of external website"
-
+  # ── ⏱️  Scheduled Tasks (persistent background automation) ────────────────
   - name: cron_schedule
     action: ask
-    description: "Confirm scheduling a recurring or future task"
+    description: "Confirm before scheduling a recurring or future task"
 
-  - name: smtp_send_email
+  - name: cron_delete
     action: ask
-    description: "SMTP Email Restrictions"
-    rules:
-      - field: recipient
-        regex: "^.*@(gmail\\.com|outlook\\.com)$"
-        action: ask
-        description: "Always ask for common public providers"
-      - field: recipient
-        regex: "^.*@example\\.com$"
-        action: allow
-        description: "Auto-allow internal example.com emails"
+    description: "Confirm before deleting a scheduled job"
 
-# Whitelist: If defined, ONLY these tools are allowed
+# Blacklist: Tools that are strictly NEVER allowed
+blacklist: []
+
+# Whitelist: If set, ONLY these tools are permitted (leave commented for open access)
 # whitelist:
 #   - calc
 #   - get_time
+#   - wikipedia_search
 
-# Blacklist: Tools that are strictly forbidden
-blacklist: []
-
-# Analysis: Tools that should be scrutinized (requires LLM reasoning in future)
+# Analysis: Tools flagged for extra scrutiny (future LLM review integration)
 analyze: []
 """
         self.path.write_text(default_content, encoding="utf-8")
