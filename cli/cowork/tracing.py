@@ -134,9 +134,21 @@ def find_latest_trace_file(session_id: Optional[str] = None) -> Optional[Path]:
     """Find latest trace file from session scope or global traces."""
     roots: list[Path] = []
     if session_id:
+        # Check global traces directory for this session
         roots.append(Path.home() / ".cowork" / "traces" / session_id)
-    roots.append(Path.home() / ".cowork" / "traces")
-    roots.append(Path.home() / ".cowork" / "workspace")
+        
+        # ALSO check the session's workspace traces if it exists
+        try:
+            from .workspace import workspace_manager
+            ws = workspace_manager.get_by_session_id(session_id)
+            if ws:
+                roots.append(ws.path / "traces")
+        except ImportError:
+            # Fallback if called from a context where workspace isn't available
+            pass
+    else:
+        roots.append(Path.home() / ".cowork" / "traces")
+        roots.append(Path.home() / ".cowork" / "workspace")
 
     candidates: list[Path] = []
     for root in roots:
@@ -343,3 +355,70 @@ def render_trace_timeline(
         )
 
     return Group(header, *event_panels)
+
+
+def render_llm_trace(events: list[dict[str, Any]]):
+    """Render only LLM prompt composition (system/user messages)."""
+    from rich.console import Group
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
+
+    renderables = []
+    for idx, e in enumerate(events):
+        if e.get("event") != "llm_request":
+            continue
+
+        data = e.get("data", {})
+        messages = data.get("messages", [])
+        step = data.get("step", "?")
+        model = data.get("model", "unknown")
+
+        table = Table(box=None, show_header=True, header_style="primary", expand=True)
+        table.add_column("Role", style="secondary", width=12)
+        table.add_column("Content")
+
+        for m in messages:
+            role = str(m.get("role", "unknown"))
+            content = str(m.get("content", ""))
+            
+            # Highlight roles
+            role_style = "secondary"
+            if role == "system": role_style = "accent"
+            if role == "user": role_style = "primary"
+            if role == "assistant": role_style = "highlight"
+            
+            table.add_row(Text(role.upper(), style=role_style), content)
+            table.add_section()
+
+        renderables.append(
+            Panel(
+                table,
+                title=f"🤖 LLM Prompt Composition — Step {step} ({model})",
+                border_style="highlight",
+                padding=(0, 1),
+            )
+        )
+
+    if not renderables:
+        return Text("No LLM requests found in this trace.", style="muted")
+
+    return Group(*renderables)
+def clean_all_traces() -> int:
+    """Delete all .jsonl trace files from global and workspace roots."""
+    roots = [
+        Path.home() / ".cowork" / "traces",
+        Path.home() / ".cowork" / "workspace",
+    ]
+    count = 0
+    for root in roots:
+        if not root.exists():
+            continue
+        # Find all jsonl files recursively
+        for p in root.rglob("*.jsonl"):
+            try:
+                p.unlink()
+                count += 1
+            except OSError:
+                pass
+    return count

@@ -14,7 +14,7 @@ from rich.syntax import Syntax
 from rich.tree import Tree
 
 from ..config import Session
-from ..tracing import find_latest_trace_file, load_trace_events, render_trace_timeline
+from ..tracing import find_latest_trace_file, load_trace_events, render_trace_timeline, render_llm_trace
 from ..ui import console, render_error, render_session_stats, render_success, render_token_usage, render_warning
 from ..core import _config, _job_manager, _token_tracker, _last_job, get_memory_user_id
 
@@ -28,11 +28,11 @@ async def handle_trace(
     """Handle /trace command."""
     sub = parts[1].lower() if len(parts) > 1 else ""
 
-    if sub in ("full", "raw", "path"):
+    if sub in ("full", "raw", "path", "llm"):
         target_path = ""
         if len(parts) > 2:
             target_path = parts[2]
-        elif _last_job and getattr(_last_job, "trace_path", ""):
+        elif _last_job and _last_job.session_id == session.session_id and getattr(_last_job, "trace_path", ""):
             target_path = _last_job.trace_path
         else:
             latest = find_latest_trace_file(session.session_id)
@@ -40,7 +40,7 @@ async def handle_trace(
                 target_path = str(latest)
 
         if not target_path:
-            console.print("[muted]No trace file available yet.[/muted]")
+            console.print("[muted]No trace file available for this session yet.[/muted]")
         else:
             p = Path(target_path)
             events = load_trace_events(p)
@@ -57,6 +57,8 @@ async def handle_trace(
                         background_color="default",
                     )
                 )
+            elif sub == "llm":
+                console.print(render_llm_trace(events))
             else:
                 console.print(
                     render_trace_timeline(
@@ -66,6 +68,13 @@ async def handle_trace(
                         trace_file=str(p),
                     )
                 )
+        return True, None, False
+
+    if sub == "clean":
+        if click.confirm("Are you sure you want to delete ALL trace files?", default=False):
+            from ..tracing import clean_all_traces
+            count = clean_all_traces()
+            render_success(f"🧹 Deleted {count} trace file(s).")
         return True, None, False
 
     if _last_job:

@@ -1128,7 +1128,9 @@ def render_help() -> None:
         ("/scratchpad read <no>",           "Read one scratchpad item by number"),
         ("/tools",                          "List all activated tools"),
         ("/trace",                          "Show last job trace summary"),
+        ("/trace llm",                     "Monitor LLM prompt composition (system/user)"),
         ("/trace full",                     "Render full readable trace events"),
+        ("/trace clean",                    "Delete all saved trace files"),
         ("/trace raw",                      "Print raw JSON trace events"),
         ("/trace path",                     "Show trace file path"),
         ("/clear",                          "Clear the terminal"),
@@ -1257,7 +1259,9 @@ SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/scratchpad read ",        "Read scratchpad item  e.g. /scratchpad read 2"),
     ("/tools",                   "List all active tools (built-in + configured)"),
     ("/trace",                   "Show execution trace summary of last job"),
+    ("/trace llm",               "Monitor LLM prompt composition (system/user)"),
     ("/trace full",              "Render full readable trace events"),
+    ("/trace clean",             "Wipe all trace history from disk"),
     ("/trace raw",               "Print raw JSON trace events"),
     ("/trace path",              "Show current trace file path"),
     ("/open ",                    "Open a workspace artifact file locally"),
@@ -1391,7 +1395,7 @@ def _get_prompt_session() -> PromptSession:
             completer=_get_super_completer(),
             auto_suggest=AutoSuggestFromHistory(),
             style=PT_STYLE,
-            complete_while_typing=False,   # Only complete on Tab — avoids FTS/fuzzy on every keystroke
+            complete_while_typing=True,
             enable_history_search=True,    # Ctrl+R incremental search
             mouse_support=False,
             wrap_lines=True,
