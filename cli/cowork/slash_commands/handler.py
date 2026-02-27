@@ -20,6 +20,7 @@ from .cron_cmd import handle_cron
 from .memory_cmd import handle_memory, handle_issues
 from .ai_cmd import handle_ai, handle_model, handle_mm
 from .trace_cmd import handle_trace, handle_stats, handle_tokens
+from .acl_cmd import handle_acl
 from .misc_cmd import (
     handle_exit,
     handle_clear,
@@ -78,9 +79,11 @@ async def handle_command(
     elif command == "/scratchpad":
         return await handle_scratchpad(parts, scratchpad)
 
-    # ── Workspace ─────────────────────────────────────────────────────────────
     elif command == "/workspace":
         return await handle_workspace(parts, session)
+
+    elif command == "/acl":
+        return await handle_acl(parts, session)
 
     # ── Trace / Stats / Tokens ────────────────────────────────────────────────
     elif command == "/trace":

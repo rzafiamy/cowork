@@ -921,6 +921,20 @@ class GeneralPurposeAgent:
         Execute the full agentic workflow for a user request.
         Returns the final assistant response string.
         """
+        from .acl import current_session_id
+        token = current_session_id.set(session.session_id)
+        try:
+            return await self._run_impl(user_input, session, job, action_mode)
+        finally:
+            current_session_id.reset(token)
+
+    async def _run_impl(
+        self,
+        user_input: str,
+        session: Session,
+        job: AgentJob,
+        action_mode: Optional[dict] = None,
+    ) -> str:
         import datetime as dt
         trace = AgentTrace(job_id=job.job_id)
         self.trace_cb(

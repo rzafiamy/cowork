@@ -50,9 +50,8 @@ class WorkspaceWriteTool(BaseTool):
         ws = self._get_workspace_session()
         if not ws:
             fallback_dir = WORKSPACE_ROOT / "artifacts"
-            fallback_dir.mkdir(parents=True, exist_ok=True)
             path = fallback_dir / safe_filename
-            path.write_text(content, encoding="utf-8")
+            file_manager.write_text(path, content, reason=f"workspace_write (fallback): {safe_filename}")
             return f"✅ Written to workspace: {path}\n• Size: {len(content)} chars"
         path = ws.write_artifact(safe_filename, content)
         return (

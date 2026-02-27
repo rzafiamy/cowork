@@ -22,17 +22,18 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional
+from contextvars import ContextVar
 
 import yaml
 
-from .config import CONFIG_DIR
+from .paths import CONFIG_DIR, ACL_FILE, ACL_LOG_FILE
 
 logger = logging.getLogger("cowork.acl")
 
 
 # ─── Enums & Constants ────────────────────────────────────────────────────────
 
-class FileAccessType(Enum):
+class FileAccessType(str, Enum):
     READ = "read"
     WRITE = "write"
 
@@ -42,9 +43,7 @@ class FileAccessAction(Enum):
     BLOCK = "block"
     AUDIT = "audit"
 
-
-ACL_FILE = CONFIG_DIR / "acl.yaml"
-ACL_LOG_FILE = CONFIG_DIR / "acl.log"
+# ─── Default Policy ───────────────────────────────────────────────────────────
 DEFAULT_POLICY = {
     "default_read": FileAccessAction.ALLOW,
     "default_write": FileAccessAction.ALLOW,
@@ -52,14 +51,17 @@ DEFAULT_POLICY = {
 ACCESS_ANY = "any"
 VALID_ACCESS = {ACCESS_ANY, "read", "write"}
 
+# Context variable to track the current session ID for logging
+current_session_id = ContextVar[Optional[str]]("current_session_id", default=None)
+
 
 # ─── Exceptions ───────────────────────────────────────────────────────────────
 
 class FileAccessDenied(PermissionError):
-    def __init__(self, path: Path, access: FileAccessType, rule: Optional["ACLRule"] = None):
+    def __init__(self, path: Path, access: FileAccessType, rule: Optional[ACLRule] = None):
         reason = rule.description if rule and rule.description else "no matching rule"
         msg = (
-            f"{access.value.upper()} access denied for {path} — action=block, {reason}"
+            f"{access.name} access denied for {path} — action=block, {reason}"
         )
         super().__init__(msg)
 
@@ -237,6 +239,7 @@ rules:
     def _log_event(self, event: str, data: dict[str, Any]) -> None:
         record = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
+            "session_id": current_session_id.get(),
             "event": event,
             "data": data,
         }
@@ -345,6 +348,10 @@ class FileManager:
     def __init__(self, acl: AccessControlManager) -> None:
         self._acl = acl
 
+    def check_access(self, path: Path | str, access: FileAccessType, *, reason: str = "") -> None:
+        """Perform a manual ACL check."""
+        self._acl.check_access(Path(path), access, reason=reason)
+
     # ── Text operations ───────────────────────────────────────────────────────
 
     def read_text(self, path: Path | str, *, reason: str = "", errors: str = "strict") -> str:
@@ -416,6 +423,40 @@ class FileManager:
 
     def is_dir(self, path: Path | str) -> bool:
         return Path(path).is_dir()
+
+    def unlink(self, path: Path | str, *, reason: str = "") -> None:
+        """Delete a file after ACL check."""
+        p = Path(path)
+        self._acl.check_access(p, FileAccessType.WRITE, reason=reason or "unlink")
+        p.unlink(missing_ok=True)
+
+    def rmtree(self, path: Path | str, *, reason: str = "") -> None:
+        """Delete a directory tree after ACL check."""
+        import shutil
+        p = Path(path)
+        self._acl.check_access(p, FileAccessType.WRITE, reason=reason or "rmtree")
+        shutil.rmtree(p, ignore_errors=True)
+
+    def move(self, src: Path | str, dst: Path | str, *, reason: str = "") -> None:
+        """Move/rename a file or directory after ACL check on both source and destination."""
+        import shutil
+        s = Path(src)
+        d = Path(dst)
+        self._acl.check_access(s, FileAccessType.WRITE, reason=f"{reason or 'move'} (src)")
+        self._acl.check_access(d, FileAccessType.WRITE, reason=f"{reason or 'move'} (dst)")
+        shutil.move(str(s), str(d))
+
+    def listdir(self, path: Path | str, *, reason: str = "") -> list[str]:
+        """List directory contents after ACL check."""
+        p = Path(path)
+        self._acl.check_access(p, FileAccessType.READ, reason=reason or "listdir")
+        return os.listdir(p)
+
+    def glob(self, path: Path | str, pattern: str, *, reason: str = "") -> list[Path]:
+        """Glob directory contents after ACL check."""
+        p = Path(path)
+        self._acl.check_access(p, FileAccessType.READ, reason=reason or "glob")
+        return list(p.glob(pattern))
 
 
 # ─── Singleton FileManager ────────────────────────────────────────────────────

@@ -15,16 +15,11 @@ from typing import Any, Optional
 
 from dotenv import load_dotenv
 
-# ─── Paths ────────────────────────────────────────────────────────────────────
-CONFIG_DIR  = Path.home() / ".cowork"
-CONFIG_FILE = CONFIG_DIR / "config.json"
-SESSIONS_DIR = CONFIG_DIR / "sessions"
-SCRATCHPAD_DIR = CONFIG_DIR / "scratchpad"
-WORKSPACE_ROOT = CONFIG_DIR / "workspace"
-JOBS_FILE        = CONFIG_DIR / "jobs.json"
-TOKENS_FILE      = CONFIG_DIR / "tokens.json"
-AI_PROFILES_FILE = CONFIG_DIR / "ai_profiles.json"
-FIREWALL_FILE    = CONFIG_DIR / "firewall.yaml"
+from .paths import (
+    CONFIG_DIR, CONFIG_FILE, SESSIONS_DIR, SCRATCHPAD_DIR,
+    WORKSPACE_ROOT, JOBS_FILE, TOKENS_FILE, AI_PROFILES_FILE, FIREWALL_FILE
+)
+from .acl import file_manager
 
 def _ensure_dirs() -> None:
     CONFIG_DIR.mkdir(exist_ok=True)
@@ -144,10 +139,9 @@ class ConfigManager:
         self._load()
 
     def _load(self) -> None:
-        if CONFIG_FILE.exists():
+        if file_manager.exists(CONFIG_FILE):
             try:
-                with open(CONFIG_FILE) as f:
-                    self._data = json.load(f)
+                self._data = file_manager.read_json(CONFIG_FILE, reason="config load")
 
                 # 🛡️ CLEANUP: Immediately purge and persist if sensitive keys leaked into config.json
                 had_sensitive = any(is_sensitive_key(k) for k in self._data)
@@ -191,8 +185,7 @@ class ConfigManager:
         # 🛡️ Filter sensitive keys before writing to file
         safe_data = {k: v for k, v in self._data.items() if not is_sensitive_key(k)}
         
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(safe_data, f, indent=2)
+        file_manager.write_json(CONFIG_FILE, safe_data, reason="config save")
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._data.get(key, default)
@@ -279,16 +272,15 @@ class Session:
 
     def save(self) -> None:
         path = SESSIONS_DIR / f"{self.session_id}.json"
-        with open(path, "w") as f:
-            json.dump(self.to_dict(), f, indent=2)
+        file_manager.write_json(path, self.to_dict(), reason="session save")
 
     @classmethod
     def load(cls, session_id: str) -> Optional["Session"]:
         path = SESSIONS_DIR / f"{session_id}.json"
-        if not path.exists():
+        if not file_manager.exists(path):
             return None
-        with open(path) as f:
-            return cls.from_dict(json.load(f))
+        data = file_manager.read_json(path, reason="session load")
+        return cls.from_dict(data)
 
     @classmethod
     def list_all(cls) -> list[dict]:
@@ -463,13 +455,11 @@ class Scratchpad:
 
     def _load_index(self) -> None:
         p = self._index_path()
-        if p.exists():
-            with open(p) as f:
-                self._index = json.load(f)
+        if file_manager.exists(p):
+            self._index = file_manager.read_json(p, reason="scratchpad index load")
 
     def _save_index(self) -> None:
-        with open(self._index_path(), "w") as f:
-            json.dump(self._index, f, indent=2)
+        file_manager.write_json(self._index_path(), self._index, reason="scratchpad index save")
 
     def save(self, key: str, content: str, description: str = "") -> str:
         """Save content, return ref:key pointer."""
@@ -477,7 +467,7 @@ class Scratchpad:
         safe_key = Path(key).name
         ref_key = f"ref:{safe_key}"
         path = self._dir / f"{safe_key}.txt"
-        path.write_text(content, encoding="utf-8")
+        file_manager.write_text(path, content, reason=f"scratchpad save key={safe_key}")
         self._index[safe_key] = {
             "key": safe_key,
             "description": description,
@@ -493,8 +483,8 @@ class Scratchpad:
         from pathlib import Path
         clean_key = Path(key.replace("ref:", "")).name
         path = self._dir / f"{clean_key}.txt"
-        if path.exists():
-            return path.read_text(encoding="utf-8")
+        if file_manager.exists(path):
+            return file_manager.read_text(path, reason=f"scratchpad get key={clean_key}")
         return None
 
     def read_chunk(self, key: str, chunk_index: int = 0, chunk_size: int = 2000) -> Optional[str]:

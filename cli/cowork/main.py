@@ -25,6 +25,7 @@ from .commands.cron import cron
 from .commands.tools import tools
 from .commands.trace import trace
 from .commands.firewall import firewall
+from .commands.acl import acl
 from .commands.misc import setup, ping, tokens, reset
 
 @click.group(invoke_without_command=True)
@@ -67,6 +68,7 @@ cli.add_command(setup)
 cli.add_command(ping)
 cli.add_command(tokens)
 cli.add_command(firewall)
+cli.add_command(acl)
 cli.add_command(reset)
 
 def main() -> None:

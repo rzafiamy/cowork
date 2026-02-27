@@ -51,9 +51,7 @@ def _get_artifacts_dir(scratchpad) -> Path:
         ws = workspace_manager.get_by_session_id(scratchpad.session_id)
         if ws:
             return ws.artifacts_path
-    fallback = WORKSPACE_ROOT / "artifacts"
-    fallback.mkdir(parents=True, exist_ok=True)
-    return fallback
+    return WORKSPACE_ROOT / "artifacts"
 
 
 def _safe_filename(name: str) -> str:
@@ -193,7 +191,7 @@ class VisionAnalyzeTool(BaseTool):
         p = Path(file_path)
         if not p.is_absolute():
             p = WORKSPACE_ROOT / file_path
-        if not p.exists():
+        if not file_manager.exists(p):
             return f"❌ File not found: {p}"
 
         file_bytes = file_manager.read_bytes(p, reason=f"vision_analyze: {p.name}")
@@ -412,7 +410,7 @@ class SpeechToTextTool(BaseTool):
         p = Path(file_path)
         if not p.is_absolute():
             p = WORKSPACE_ROOT / file_path
-        if not p.exists():
+        if not file_manager.exists(p):
             return f"❌ File not found: {p}"
 
         self._emit(f"🎤 Transcribing audio: '{p.name}'...")

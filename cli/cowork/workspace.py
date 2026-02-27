@@ -29,18 +29,7 @@ from typing import Any, Optional
 from .acl import file_manager
 
 
-# ─── Workspace Root Discovery ─────────────────────────────────────────────────
-
-def _find_workspace_root() -> Path:
-    """
-    Returns ~/.cowork/workspace as the primary workspace root.
-    """
-    root = Path.home() / ".cowork" / "workspace"
-    root.mkdir(parents=True, exist_ok=True)
-    return root
-
-
-WORKSPACE_ROOT: Path = _find_workspace_root()
+from .paths import WORKSPACE_ROOT
 
 
 # ─── Slug Utilities ───────────────────────────────────────────────────────────
@@ -307,7 +296,7 @@ class WorkspaceManager:
         WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
 
     def _existing_slugs(self) -> set[str]:
-        return {p.name for p in WORKSPACE_ROOT.iterdir() if p.is_dir() and not p.name.startswith(".")}
+        return {name for name in file_manager.listdir(WORKSPACE_ROOT, reason="workspace list slugs") if not name.startswith(".")}
 
     def create(self, title: str = "New Session", session_id: Optional[str] = None) -> WorkspaceSession:
         """Create a new workspace session with a human-readable slug."""
@@ -395,7 +384,7 @@ class WorkspaceManager:
         ws.title = new_title
         if new_slug != slug:
             new_path = WORKSPACE_ROOT / new_slug
-            shutil.move(str(ws.path), str(new_path))
+            file_manager.move(ws.path, new_path, reason="workspace rename")
             ws.slug = new_slug
             ws._dir = new_path
         ws.save()
@@ -423,11 +412,10 @@ class WorkspaceManager:
         # Try to find session_id to cascade delete
         session_id = None
         meta_path = path / "session.json"
-        if meta_path.exists():
+        if file_manager.exists(meta_path):
             try:
-                with open(meta_path, encoding="utf-8") as f:
-                    data = json.load(f)
-                    session_id = data.get("session_id")
+                data = file_manager.read_json(meta_path, reason="workspace delete discovery")
+                session_id = data.get("session_id")
             except Exception:
                 pass
 
@@ -439,7 +427,7 @@ class WorkspaceManager:
                 session_file.unlink()
 
         # Delete the workspace folder
-        shutil.rmtree(path)
+        file_manager.rmtree(path, reason="workspace delete")
         return True
 
     def clear_all(self) -> int:
@@ -471,7 +459,7 @@ class WorkspaceManager:
             if not ws:
                 # Orphaned folder (no session.json). If no content, delete.
                 if not has_notes and not has_artifacts:
-                    shutil.rmtree(path)
+                    file_manager.rmtree(path, reason="clean empty orphan")
                     count += 1
                 continue
                 
@@ -494,7 +482,7 @@ class WorkspaceManager:
             if query_lower in ctx.lower():
                 hits.append("context.md")
             # Search notes (content + filename)
-            for note_path in ws.notes_path.glob("*.md"):
+            for note_path in file_manager.glob(ws.notes_path, "*.md", reason="workspace search"):
                 try:
                     note_content = file_manager.read_text(note_path, reason="workspace search notes", errors="ignore")
                 except Exception:
@@ -502,7 +490,7 @@ class WorkspaceManager:
                 if query_lower in note_path.name.lower() or query_lower in note_content.lower():
                     hits.append(f"notes/{note_path.name}")
             # Search scratchpad (content + filename)
-            for blob_path in ws.scratchpad_path.glob("*.txt"):
+            for blob_path in file_manager.glob(ws.scratchpad_path, "*.txt", reason="workspace search"):
                 try:
                     blob_content = file_manager.read_text(blob_path, reason="workspace search scratchpad", errors="ignore")
                 except Exception:
@@ -510,10 +498,10 @@ class WorkspaceManager:
                 if query_lower in blob_path.name.lower() or query_lower in blob_content.lower():
                     hits.append(f"scratchpad/{blob_path.name}")
             # Search artifact filenames
-            if ws.artifacts_path.exists():
-                for art_path in ws.artifacts_path.iterdir():
-                    if query_lower in art_path.name.lower():
-                        hits.append(f"artifacts/{art_path.name}")
+            if file_manager.exists(ws.artifacts_path):
+                for art_name in file_manager.listdir(ws.artifacts_path, reason="workspace search artifacts"):
+                    if query_lower in art_name.lower():
+                        hits.append(f"artifacts/{art_name}")
             if hits:
                 results.append({
                     "slug":    slug,

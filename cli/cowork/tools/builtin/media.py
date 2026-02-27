@@ -17,9 +17,7 @@ def _get_artifacts_dir(scratchpad) -> Path:
         ws = workspace_manager.get_by_session_id(scratchpad.session_id)
         if ws:
             return ws.artifacts_path
-    fallback = WORKSPACE_ROOT / "artifacts"
-    fallback.mkdir(parents=True, exist_ok=True)
-    return fallback
+    return WORKSPACE_ROOT / "artifacts"
 
 class YoutubeDownloadTool(BaseTool):
     """
@@ -56,6 +54,8 @@ class YoutubeDownloadTool(BaseTool):
 
     def execute(self, url: str, format: str = "video") -> str:
         artifacts_dir = _get_artifacts_dir(self.scratchpad)
+        from ...acl import FileAccessType
+        file_manager.check_access(artifacts_dir, FileAccessType.WRITE, reason="youtube_download target")
         artifacts_dir.mkdir(parents=True, exist_ok=True)
         
         self._emit(f"📥 Downloading {url} as {format}...")
@@ -112,13 +112,15 @@ class MediaConvertTool(BaseTool):
 
     def execute(self, input_file: str, output_format: str) -> str:
         artifacts_dir = _get_artifacts_dir(self.scratchpad)
+        from ...acl import FileAccessType
+        file_manager.check_access(artifacts_dir, FileAccessType.WRITE, reason="media_convert target")
         artifacts_dir.mkdir(parents=True, exist_ok=True)
         
         input_path = Path(input_file)
         if not input_path.is_absolute():
             input_path = WORKSPACE_ROOT / input_file
             
-        if not input_path.exists():
+        if not file_manager.exists(input_path):
             return f"❌ Input file not found: {input_path}"
             
         output_name = f"{input_path.stem}.{output_format.lstrip('.')}"

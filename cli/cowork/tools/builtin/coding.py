@@ -82,10 +82,9 @@ def _resolve_in_project(path: str, scratchpad: Any = None) -> Path:
 
 def _is_text_file(path: Path) -> bool:
     try:
-        with open(path, "rb") as f:
-            chunk = f.read(2048)
+        chunk = file_manager.read_bytes(path, reason="coding check text type")[:2048]
         return b"\x00" not in chunk
-    except OSError:
+    except Exception:
         return False
 
 
@@ -133,7 +132,7 @@ class CodebaseListFilesTool(BaseTool):
             lines = [f"📂 Project root: {root}", f"📁 Directory: {start.relative_to(root)}", ""]
             count = 0
             base_depth = len(start.parts)
-            for p in sorted(start.rglob("*")):
+            for p in sorted(file_manager.glob(start, "**/*", reason="codebase list files")):
                 if not p.is_file():
                     continue
                 depth = len(p.parts) - base_depth
