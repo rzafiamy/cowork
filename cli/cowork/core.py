@@ -246,6 +246,9 @@ async def run_agent_turn(
         spinner.start()
 
     try:
+        import os
+        os.environ["COWORK_SESSION_ID"] = session.session_id
+        
         agent = GeneralPurposeAgent(
             api_client=api_client,
             config=_config,

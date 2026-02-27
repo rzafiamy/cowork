@@ -81,6 +81,7 @@ You are **Cowork**, an enterprise AI coworker.
 - **Safety**: Fail loudly with actionable hints. **NEVER** fabricate results or OS paths.
 - **Formatting**: Use GH-flavored Markdown. Ensure empty lines exist around tables/code blocks.
 - **Precision**: Only share paths relative to the workspace (e.g., `artifacts/report.pdf`).
+- **Artifacts**: If a tool saves a file or generates an artifact (e.g., chart, document, image, audio), you MUST explicitly state the file path or reference name in your final response (e.g., "I have saved the chart to `artifacts/chart_abc.png`").
 
 ## ⏱️ Step Budget
 You have a fixed reasoning limit. **Pace yourself**:
@@ -220,8 +221,13 @@ TRIPLET_EXTRACTION_PROMPT = """\
 Extract factual knowledge triplets from the user's message below.
 Focus on durable facts: who the user is, what they prefer, their goals, and context.
 Skip speculative or conversational statements.
-Do NOT extract temporary execution instructions (for example: "send this by email", "for this task", "right now", "today").
-Prefer stable profile facts over transient actions (for example: keep "my email address is x@y.com", skip "email this image to ... now").
+Do NOT extract temporary execution instructions (e.g., "send this by email", "for this task", "right now", "today").
+Prefer stable profile facts over transient actions (e.g., keep "my email address is x@y.com", skip "email this image to ... now").
+
+Rules for perspective:
+- ALWAYS use "User" as the subject for statements about the person speaking (the user).
+- Even if the user mentions their name (e.g., "My name is Lola"), the subject should be "User", and the fact should be "User has name Lola".
+- If the user says "I live in Paris", extract: {"subject": "User", "predicate": "lives in", "object": "Paris"}.
 
 Message: {message}
 
@@ -276,11 +282,12 @@ Review the list of subject-predicate-object triplets below.
 Your goal is to consolidate and deduplicate this knowledge base without losing information.
 
 Rules:
-1. Merge redundant facts (e.g., "John likes Python" and "John prefers Python coding" -> "John prefers Python")
+1. Merge redundant facts (e.g., "John likes Python" and "John prefers Python coding" -> "John prefers Python").
 2. Remove any minor or trivial facts if they are covered by more significant ones.
 3. Resolve contradictions (prefer the most recent or most detailed info).
 4. Drop transient task instructions (e.g., "send this now", "for this request") and keep durable profile/project facts.
-5. Keep the output as a clean JSON list of triplets.
+5. PERSPECTIVE NORMALIZATION: If a triplet refers to the person who is speaking (e.g., "Lola", "The User", "John" if he is the speaker), ALWAYS normalize the subject to "User".
+6. Keep the output as a clean JSON list of triplets.
 
 Input Triplets:
 {triplets}

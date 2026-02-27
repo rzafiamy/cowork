@@ -92,11 +92,19 @@ def plotchar(chart_type: str, data: str, x_key: str, y_key: str, output_path: st
         if not os.path.isabs(output_path):
             try:
                 from ...workspace import workspace_manager
-                sessions = workspace_manager.list_all()
-                if sessions:
-                    active_session = workspace_manager.load(sessions[0]["slug"])
-                    if active_session:
-                        output_path = str(active_session.artifacts_path / os.path.basename(output_path))
+                session_id = os.getenv("COWORK_SESSION_ID")
+                active_session = None
+                
+                if session_id:
+                    active_session = workspace_manager.get_by_session_id(session_id)
+                
+                if not active_session:
+                    sessions = workspace_manager.list_all()
+                    if sessions:
+                        active_session = workspace_manager.load(sessions[0]["slug"])
+                
+                if active_session:
+                    output_path = str(active_session.artifacts_path / os.path.basename(output_path))
             except Exception:
                 pass
 
@@ -109,7 +117,23 @@ def plotchar(chart_type: str, data: str, x_key: str, y_key: str, output_path: st
         plt.close()
 
         abs_path = os.path.abspath(output_path)
-        return f"✅ Chart generated successfully. Saved to: {abs_path}"
+        rel_path = output_path
+        
+        # Try to make it relative to the workspace for cleaner AI reporting
+        try:
+            from ...workspace import workspace_manager
+            session_id = os.getenv("COWORK_SESSION_ID")
+            active_session = None
+            if session_id:
+                active_session = workspace_manager.get_by_session_id(session_id)
+            if active_session:
+                workspace_root = active_session.root_path
+                if abs_path.startswith(str(workspace_root)):
+                    rel_path = os.path.relpath(abs_path, workspace_root)
+        except Exception:
+            pass
+
+        return f"✅ Chart generated successfully. Saved to: {rel_path} (Full path: {abs_path})"
 
     except Exception as e:
         if plt: plt.close()

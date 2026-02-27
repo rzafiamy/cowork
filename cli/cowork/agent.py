@@ -786,16 +786,22 @@ class GeneralPurposeAgent:
             ln = line.strip()
             if not ln:
                 continue
-            if ln.startswith("•"):
-                ln = ln[1:].strip()
-            if ln.startswith("✅") or ln.startswith("❌") or ln.startswith("⚠️") or ln.startswith("🛡️"):
-                ln = ln[1:].strip()
+            # Strip common prefixes
+            for prefix in ["•", "✅", "❌", "⚠️", "🛡️"]:
+                if ln.startswith(prefix):
+                    ln = ln[len(prefix):].strip()
+            
             if ln and not ln.startswith("[") and len(ln) > 2:
-                snippets.append(ln)
-            if len(snippets) >= 2:
+                # Prioritize paths and "Saved to" messages
+                if "saved to" in ln.lower() or "file:" in ln.lower() or "path:" in ln.lower() or "ref:" in ln.lower():
+                    snippets.insert(0, ln)
+                else:
+                    snippets.append(ln)
+            
+            if len(snippets) >= 4: # Gather a few more candidates
                 break
 
-        finding = " | ".join(snippets)[:260] if snippets else (text[:260] if text else "No output.")
+        finding = " | ".join(snippets[:3])[:260] if snippets else (text[:260] if text else "No output.")
         if "not found" in lowered and status == "ok":
             status = "partial"
             next_action = "Validate input/query and retry with adjusted parameters."
