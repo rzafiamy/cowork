@@ -1,6 +1,7 @@
 """
 🎨 Multi-Modal Tools
 Vision/image analysis, image generation, speech-to-text (ASR), and text-to-speech (TTS).
+All file I/O is routed through file_manager (ACL-enforced).
 
 Each tool uses its own configurable endpoint + API key so users can point them at any
 OpenAI-compatible multi-modal service (OpenAI, Together AI, Replicate, local Whisper, etc.).
@@ -39,6 +40,7 @@ from typing import Any, Dict, Optional
 from ..base import BaseTool
 from .utility import sanitize_for_audio
 from ...workspace import workspace_manager, WORKSPACE_ROOT
+from ...acl import file_manager
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -194,7 +196,7 @@ class VisionAnalyzeTool(BaseTool):
         if not p.exists():
             return f"❌ File not found: {p}"
 
-        file_bytes = p.read_bytes()
+        file_bytes = file_manager.read_bytes(p, reason=f"vision_analyze: {p.name}")
         mime = mimetypes.guess_type(str(p))[0] or "image/jpeg"
 
         try:
@@ -329,7 +331,7 @@ class ImageGenerateTool(BaseTool):
                 safe_prefix = _safe_filename(filename_prefix) or "generated"
                 fname = f"{safe_prefix}_{i}.png"
                 out_path = artifacts_dir / fname
-                out_path.write_bytes(raw)
+                file_manager.write_bytes(out_path, raw, reason=f"image_generate: {fname}")
                 saved_paths.append(str(out_path))
             elif img.get("url"):
                 urls.append(img["url"])
@@ -415,7 +417,7 @@ class SpeechToTextTool(BaseTool):
 
         self._emit(f"🎤 Transcribing audio: '{p.name}'...")
 
-        file_bytes = p.read_bytes()
+        file_bytes = file_manager.read_bytes(p, reason=f"speech_to_text: {p.name}")
         mime = mimetypes.guess_type(str(p))[0] or "audio/mpeg"
 
         fields: dict = {"model": model}
@@ -554,7 +556,7 @@ class TextToSpeechTool(BaseTool):
             safe_name = f"speech_{int(_time.time())}.{response_format}"
 
         out_path = artifacts_dir / safe_name
-        out_path.write_bytes(audio_bytes)
+        file_manager.write_bytes(out_path, audio_bytes, reason=f"text_to_speech: {safe_name}")
         size_kb = out_path.stat().st_size // 1024
 
         return (

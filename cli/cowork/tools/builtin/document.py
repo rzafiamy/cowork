@@ -2,6 +2,7 @@
 📄 Document Creation Tools
 Tools for generating PDF, PPTX (PowerPoint), XLSX (Excel), and DOCX (Word)
 files directly into the session workspace artifacts folder.
+All file I/O is routed through file_manager (ACL-enforced).
 
 Libraries:
   • PDF  → reportlab    (vector PDF, no external deps)
@@ -17,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 from ..base import BaseTool
 from ...workspace import workspace_manager, WORKSPACE_ROOT
+from ...acl import file_manager
 
 
 # ─── Workspace helper ─────────────────────────────────────────────────────────
@@ -207,7 +209,7 @@ class DocumentCreatePdfTool(BaseTool):
             story.append(Spacer(1, 3 * mm))
 
         doc.build(story)
-        out_path.write_bytes(buf.getvalue())
+        file_manager.write_bytes(out_path, buf.getvalue(), reason=f"document_create_pdf: {filename}")
         size_kb = out_path.stat().st_size // 1024
         rel_path = _workspace_rel_path(out_path)
 

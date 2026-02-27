@@ -26,6 +26,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+from .acl import file_manager
+
 
 # ─── Workspace Root Discovery ─────────────────────────────────────────────────
 
@@ -170,8 +172,7 @@ class WorkspaceSession:
         """Persist session metadata + messages to session.json."""
         self.updated_at = datetime.utcnow().isoformat()
         meta_path = self._dir / self.META_FILE
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
+        file_manager.write_json(meta_path, self.to_dict(), reason="workspace session save")
 
     @classmethod
     def load(cls, slug: str) -> Optional["WorkspaceSession"]:
@@ -180,8 +181,7 @@ class WorkspaceSession:
         if not path.exists():
             return None
         try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
+            data = file_manager.read_json(path, reason="workspace session load")
             return cls.from_dict(data)
         except Exception:
             return None
@@ -206,15 +206,15 @@ class WorkspaceSession:
     def read_context(self) -> str:
         """Read the free-form context.md file."""
         if self.context_path.exists():
-            return self.context_path.read_text(encoding="utf-8")
+            return file_manager.read_text(self.context_path, reason="workspace read context")
         return ""
 
     def write_context(self, content: str, append: bool = False) -> None:
         """Write or append to context.md."""
         if append and self.context_path.exists():
-            existing = self.context_path.read_text(encoding="utf-8")
+            existing = file_manager.read_text(self.context_path, reason="workspace read context for append")
             content = existing + "\n\n" + content
-        self.context_path.write_text(content, encoding="utf-8")
+        file_manager.write_text(self.context_path, content, reason="workspace write context")
 
     # ── Scratchpad (within workspace folder) ──────────────────────────────────
 
@@ -222,13 +222,13 @@ class WorkspaceSession:
         """Save a blob to the session's scratchpad folder. Returns ref:key."""
         safe_key = re.sub(r"[^\w-]", "_", key)
         blob_path = self.scratchpad_path / f"{safe_key}.txt"
-        blob_path.write_text(content, encoding="utf-8")
+        file_manager.write_text(blob_path, content, reason=f"workspace scratchpad save key={safe_key}")
         # Update index
         index_path = self.scratchpad_path / "_index.json"
         index: dict = {}
         if index_path.exists():
             try:
-                index = json.loads(index_path.read_text())
+                index = file_manager.read_json(index_path, reason="workspace scratchpad index read")
             except Exception:
                 pass
         index[safe_key] = {
@@ -238,7 +238,7 @@ class WorkspaceSession:
             "saved_at":    datetime.utcnow().isoformat(),
             "path":        str(blob_path),
         }
-        index_path.write_text(json.dumps(index, indent=2), encoding="utf-8")
+        file_manager.write_json(index_path, index, reason="workspace scratchpad index write")
         return f"ref:{safe_key}"
 
     def scratchpad_get(self, key: str) -> Optional[str]:
@@ -246,7 +246,7 @@ class WorkspaceSession:
         safe_key = key.replace("ref:", "").strip()
         blob_path = self.scratchpad_path / f"{safe_key}.txt"
         if blob_path.exists():
-            return blob_path.read_text(encoding="utf-8")
+            return file_manager.read_text(blob_path, reason=f"workspace scratchpad get key={safe_key}")
         return None
 
     def scratchpad_list(self) -> list[dict]:
@@ -255,7 +255,7 @@ class WorkspaceSession:
         if not index_path.exists():
             return []
         try:
-            return list(json.loads(index_path.read_text()).values())
+            return list(file_manager.read_json(index_path, reason="workspace scratchpad list").values())
         except Exception:
             return []
 
@@ -268,7 +268,7 @@ class WorkspaceSession:
         filename = f"{ts}_{safe_title}.md"
         note_path = self.notes_path / filename
         header = f"# {title}\n\n**Category:** {category}  \n**Created:** {datetime.utcnow().isoformat()}\n\n---\n\n"
-        note_path.write_text(header + content, encoding="utf-8")
+        file_manager.write_text(note_path, header + content, reason=f"workspace save note: {title}")
         return str(note_path)
 
     # ── Artifacts ─────────────────────────────────────────────────────────────
@@ -278,7 +278,7 @@ class WorkspaceSession:
         # Sanitize filename
         safe_name = Path(filename).name  # strip any path traversal
         artifact_path = self.artifacts_path / safe_name
-        artifact_path.write_text(content, encoding="utf-8")
+        file_manager.write_text(artifact_path, content, reason=f"workspace write artifact: {safe_name}")
         return str(artifact_path)
 
     def list_artifacts(self) -> list[dict]:
@@ -368,8 +368,7 @@ class WorkspaceManager:
             if not meta_path.exists():
                 continue
             try:
-                with open(meta_path, encoding="utf-8") as f:
-                    data = json.load(f)
+                data = file_manager.read_json(meta_path, reason="workspace list sessions")
                 sessions.append({
                     "slug":          data.get("slug", slug),
                     "session_id":    data.get("session_id", ""),
@@ -406,12 +405,10 @@ class WorkspaceManager:
         session_file = sessions_dir / f"{old_session_id}.json"
         if session_file.exists():
             try:
-                with open(session_file, "r", encoding="utf-8") as f:
-                    s_data = json.load(f)
+                s_data = file_manager.read_json(session_file, reason="workspace rename cascade read")
                 s_data["title"] = new_title
                 s_data["workspace_slug"] = ws.slug
-                with open(session_file, "w", encoding="utf-8") as f:
-                    json.dump(s_data, f, indent=2)
+                file_manager.write_json(session_file, s_data, reason="workspace rename cascade write")
             except Exception:
                 pass
 
@@ -498,11 +495,19 @@ class WorkspaceManager:
                 hits.append("context.md")
             # Search notes (content + filename)
             for note_path in ws.notes_path.glob("*.md"):
-                if query_lower in note_path.name.lower() or query_lower in note_path.read_text(encoding="utf-8", errors="ignore").lower():
+                try:
+                    note_content = file_manager.read_text(note_path, reason="workspace search notes", errors="ignore")
+                except Exception:
+                    note_content = ""
+                if query_lower in note_path.name.lower() or query_lower in note_content.lower():
                     hits.append(f"notes/{note_path.name}")
             # Search scratchpad (content + filename)
             for blob_path in ws.scratchpad_path.glob("*.txt"):
-                if query_lower in blob_path.name.lower() or query_lower in blob_path.read_text(encoding="utf-8", errors="ignore").lower():
+                try:
+                    blob_content = file_manager.read_text(blob_path, reason="workspace search scratchpad", errors="ignore")
+                except Exception:
+                    blob_content = ""
+                if query_lower in blob_path.name.lower() or query_lower in blob_content.lower():
                     hits.append(f"scratchpad/{blob_path.name}")
             # Search artifact filenames
             if ws.artifacts_path.exists():

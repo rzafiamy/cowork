@@ -1,6 +1,7 @@
 """
 📁 Workspace Tools
 Tools for interacting with the workspace filesystem and session artifacts.
+All file I/O is routed through file_manager (ACL-enforced).
 """
 
 import time
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from ..base import BaseTool
 from ...workspace import WorkspaceSession, workspace_manager, WORKSPACE_ROOT
+from ...acl import file_manager
 
 class WorkspaceWriteTool(BaseTool):
     @property
@@ -103,11 +105,11 @@ class WorkspaceReadTool(BaseTool):
 
         artifact_path = ws.artifacts_path / Path(filename).name
         if artifact_path.exists():
-            return artifact_path.read_text(encoding="utf-8")
+            return file_manager.read_text(artifact_path, reason=f"workspace_read tool: {filename}")
 
         note_path = ws.notes_path / Path(filename).name
         if note_path.exists():
-            return note_path.read_text(encoding="utf-8")
+            return file_manager.read_text(note_path, reason=f"workspace_read tool: {filename}")
 
         content = ws.scratchpad_get(filename)
         if content:

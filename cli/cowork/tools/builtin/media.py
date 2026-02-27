@@ -10,6 +10,7 @@ from typing import Any, Dict
 
 from ..base import BaseTool
 from ...workspace import workspace_manager, WORKSPACE_ROOT
+from ...acl import file_manager
 
 def _get_artifacts_dir(scratchpad) -> Path:
     if scratchpad:

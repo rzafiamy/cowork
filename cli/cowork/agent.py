@@ -520,7 +520,7 @@ class GeneralPurposeAgent:
         for e in entries:
             by_turn[e["turn"]].append(e)
 
-        lines = ["[WHAT WAS ALREADY DONE THIS SESSION]"]
+        lines = ["## 📋 What Was Already Done This Session"]
         for t in sorted(by_turn):
             turn_entries = by_turn[t]
             i = 0
@@ -615,7 +615,7 @@ class GeneralPurposeAgent:
             for e in existing:
                 by_turn[e["turn"]].append(e)
 
-            lines = ["[TOOL LEDGER]"]
+            lines = ["## 📋 Tool Ledger"]
             for t in sorted(by_turn):
                 entries = by_turn[t]
                 # Group consecutive same-tool runs
@@ -722,7 +722,7 @@ class GeneralPurposeAgent:
 
             # Build a human-readable plan block for the executor's system prompt
             lines = [
-                "[EXECUTION PLAN]",
+                "## 🗺️ Execution Plan",
                 f"Goal: {goal}",
                 f"Complexity: {complexity}",
                 "",
@@ -736,6 +736,7 @@ class GeneralPurposeAgent:
                 )
             lines.append("")
             lines.append("On each REACT step, tick off the completed plan step and proceed to the next.")
+            lines.append("- *(Follow the plan above sequentially. Note deviations explicitly. Stop when the goal is met.)*")
             plan_text = "\n".join(lines)
 
             # Persist plan to scratchpad for cross-turn continuity
@@ -844,7 +845,7 @@ class GeneralPurposeAgent:
         Build a compact structured note for the next LLM step.
         """
         lines = [
-            "[TOOL REFLECTION]",
+            "## 🔍 Tool Reflection",
             f"Step: {step}",
             "Use this to continue reasoning from validated tool outcomes.",
         ]
@@ -859,10 +860,10 @@ class GeneralPurposeAgent:
         Inject explicit allowed tool contract to reduce tool-call hallucinations.
         """
         if not tools_schema:
-            return "[TOOL CONTRACT]\nNo tool calls are allowed in this turn."
+            return "## 📏 Tool Contract\nNo tool calls are allowed in this turn."
 
         lines = [
-            "### 📜 Tool Usage Contract",
+            "## 📏 Tool Usage Contract",
             "You may call **ONLY** these exact tool names. Never invent or alias tool names.",
         ]
         for tool in tools_schema:

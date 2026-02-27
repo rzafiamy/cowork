@@ -1,6 +1,7 @@
 """
 💻 Coding Tools
 Project-root scoped tools for codebase listing, reading, searching, and writing.
+All file I/O is routed through file_manager (ACL-enforced).
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from typing import Any, Dict, Optional
 
 from ..base import BaseTool
 from ...workspace import workspace_manager
+from ...acl import file_manager
 
 
 def _ensure_dir(path: Path) -> Optional[Path]:
@@ -194,7 +196,7 @@ class CodebaseReadFileTool(BaseTool):
             end = max(start, min(int(end_line), start + 1000))
             self._emit(f"💻 Reading file '{target.name}' lines {start}-{end}...")
 
-            lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+            lines = file_manager.read_text(target, reason=f"codebase_read_file: {path}", errors="replace").splitlines()
             selected = lines[start - 1:end]
             out = [f"📄 {path} (lines {start}-{min(end, len(lines))} of {len(lines)})", ""]
             for idx, line in enumerate(selected, start=start):
@@ -254,7 +256,10 @@ class CodebaseSearchTextTool(BaseTool):
                 if not file.is_file() or not _is_text_file(file):
                     continue
                 rel = file.relative_to(root)
-                content = file.read_text(encoding="utf-8", errors="replace").splitlines()
+                try:
+                    content = file_manager.read_text(file, reason="codebase_search_text", errors="replace").splitlines()
+                except Exception:
+                    continue
                 for ln, text in enumerate(content, start=1):
                     hit = bool(matcher.search(text)) if matcher else (query in text)
                     if hit:
@@ -309,10 +314,11 @@ class CodebaseWriteFileTool(BaseTool):
             root = _project_root(self.scratchpad)
             target = _resolve_in_project(path, self.scratchpad)
             target.parent.mkdir(parents=True, exist_ok=True)
-            write_mode = "a" if mode == "append" else "w"
             self._emit(f"💻 Writing file '{path}' ({mode})...")
-            with open(target, write_mode, encoding="utf-8") as f:
-                f.write(content)
+            if mode == "append":
+                file_manager.append_text(target, content, reason=f"codebase_write_file append: {path}")
+            else:
+                file_manager.write_text(target, content, reason=f"codebase_write_file overwrite: {path}")
             size = target.stat().st_size
             rel = target.relative_to(root) if target != root else Path(".")
             return (
@@ -323,7 +329,6 @@ class CodebaseWriteFileTool(BaseTool):
             )
         except Exception as e:
             return f"❌ Failed to write file: {e}"
-
 
 class CodebaseGrepTool(BaseTool):
     @property

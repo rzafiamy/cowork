@@ -47,7 +47,8 @@ class StorageWriteTool(BaseTool):
             fallback_dir = WORKSPACE_ROOT / "artifacts"
             fallback_dir.mkdir(parents=True, exist_ok=True)
             path = fallback_dir / safe_filename
-        path.write_text(content, encoding="utf-8")
+        from ...acl import file_manager
+        file_manager.write_text(path, content, reason="storage_write tool")
         return f"✅ File written: {path}\n• Size: {len(content)} chars"
 
 class GetWeatherTool(BaseTool):
