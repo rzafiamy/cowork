@@ -33,7 +33,7 @@ Rules:
 5. If the task is simple and requires only one tool call or a direct answer, output a
    single step with tool='direct_answer' and rationale explaining why no planning is needed.
 6. Be prescriptive — the executor must follow this plan, so be specific about arguments.
-7. **Recency**: If the user request is time-sensitive (e.g., "latest news", "current version", "today"), explicitly instruct the search tool to use `time_range='past_week'` or similar in the 'action' or 'rationale'.
+7. **Temporal Grounding**: Using the current date/time context, if a request involves "latest", "recent", "who is", or "what is" regarding current events, the plan MUST include a search step with strict recency parameters (e.g., `time_range='y'` or `past_month`) to avoid outdated training data.
 
 User request: {user_request}
 
@@ -82,7 +82,8 @@ You are **Cowork**, an enterprise AI coworker.
 - **Safety**: Fail loudly with actionable hints. **NEVER** fabricate results or OS paths.
 - **Formatting**: Use GH-flavored Markdown. Ensure empty lines exist around tables/code blocks.
 - **Precision**: Only share paths relative to the workspace (e.g., `artifacts/report.pdf`).
-- **Recency**: Prioritize up-to-date information. When using search tools for time-sensitive topics (news, tech, etc.), use the `time_range` or `freshness` parameters to ensure results are current.
+- **Temporal Anchoring**: Prioritize information relevant to the current date/time. When facts are contested, search tools MUST use `time_range` or `freshness` parameters to avoid old data found in your pre-training.
+- **Hallucination Prevention**: Never guess the status of users, celebrities, or real-world events. If the knowledge is time-sensitive and not in your current search context, say "I'll need to check the latest results" and use the search tool.
 - **Artifacts**: If a tool saves a file or generates an artifact (e.g., chart, document, image, audio), you MUST explicitly state the file path or reference name in your final response (e.g., "I have saved the chart to `artifacts/chart_abc.png`").
 
 ## ⏱️ Step Budget
@@ -199,6 +200,8 @@ Available categories:
 Respond ONLY with valid JSON:
 {{"categories": ["CATEGORY1", "CATEGORY2"], "confidence": 0.9, "reasoning": "brief"}}
 
+Current context: {current_datetime}
+
 Guidance (not hard rules — use your judgment):
 - Prefer 2–3 focused categories over broad ALL_TOOLS
 - You MUST output exact category IDs from the available list (example: WEATHER_TOOLS, not WEATHER)
@@ -206,7 +209,7 @@ Guidance (not hard rules — use your judgment):
 - Use CONVERSATIONAL when no external data or action is needed
 - Use CONVERSATIONAL_ONLY for short conceptual Q&A where tool calls are very unlikely
 - Use ALL_TOOLS only if confidence is not enough to select categories
-- For time-sensitive topics, prioritize available research tools over general ones
+- For current events or time-sensitive topics (news, sports, people), ALWAYS pick `SEARCH_TOOLS` or `NEWS_TOOLS` over conversational memory.
 - Avoid selecting categories that are not in the 'Available categories' list above
 - EXTREMELY IMPORTANT: If the user wants to FIND, SEARCH FOR, or DOWNLOAD an existing image, do NOT use MULTIMODAL_TOOLS or VISION. Use SEARCH_TOOLS. ONLY use MULTIMODAL_TOOLS if the user explicitly asks to CREATE or GENERATE a brand-new AI image.\
 """

@@ -74,3 +74,40 @@ def issues_search(query: str) -> None:
     results = mgr.search_issues(query)
     import cowork.ui as ui
     ui.render_issue_search_results(query, results)
+@issues.command(name="add")
+@click.argument("issue")
+@click.argument("reason")
+@click.argument("solution")
+def issues_add(issue: str, reason: str, solution: str) -> None:
+    """Manually record a new issue hint."""
+    from ..issues import IssueManager
+    user_id = get_memory_user_id()
+    mgr = IssueManager(user_id, _config)
+    tid = mgr.add_issue(issue, reason, solution)
+    render_success(f"✅ Issue recorded manually: {tid[:8]}")
+
+
+@issues.command(name="clean")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+def issues_clean(yes: bool) -> None:
+    """Wipe all recorded issues for the current user."""
+    if not yes and not click.confirm("Are you sure you want to clear ALL recorded issues?", default=False):
+        return
+    from ..issues import IssueManager
+    user_id = get_memory_user_id()
+    mgr = IssueManager(user_id, _config)
+    mgr.clear_all()
+    render_success("🧹 Issue database wiped clean.")
+
+
+@issues.command(name="compact")
+def issues_compact() -> None:
+    """Remove exact duplicate issue hints."""
+    from ..issues import IssueManager
+    user_id = get_memory_user_id()
+    mgr = IssueManager(user_id, _config)
+    removed = mgr.compact_duplicates()
+    if removed > 0:
+        render_success(f"🧹 Removed {removed} duplicate issue hint(s).")
+    else:
+        render_success("✨ No duplicate issues found.")

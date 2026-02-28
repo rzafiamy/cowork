@@ -126,9 +126,19 @@ async def handle_issues(
         if len(parts) < 3:
             render_error("Usage: /issues search <query>")
         else:
-            query = parts[2].strip().strip('"').strip("'")
+            query = " ".join(parts[2:]).strip('"').strip("'")
             results = mgr.search_issues(query)
             ui.render_issue_search_results(query, results)
+
+    elif sub == "add":
+        # Usage: /issues add "Issue text" "Reason text" "Solution text"
+        import shlex
+        args = shlex.split(" ".join(parts[2:])) if len(parts) > 2 else []
+        if len(args) < 3:
+            render_error("Usage: /issues add \"Issue\" \"Reason\" \"Solution\"")
+        else:
+            tid = mgr.add_issue(args[0], args[1], args[2])
+            render_success(f"✅ Issue recorded manually: {tid[:8]}")
 
     elif sub == "rm":
         if len(parts) < 3:
@@ -148,10 +158,19 @@ async def handle_issues(
                 else:
                     render_error(f"Issue hint '{tid}' not found.")
 
-    elif sub == "clear":
-        if click.confirm("Are you sure you want to clear ALL recorded issues?", default=False):
+    elif sub in ("clear", "clean"):
+        confirm_txt = "Are you sure you want to clear ALL recorded issues?"
+        if click.confirm(confirm_txt, default=False):
             mgr.clear_all()
             render_success("🧹 Issue database wiped clean.")
+
+    elif sub == "compact":
+        with ThinkingSpinner("Removing duplicate issue hints"):
+            removed = mgr.compact_duplicates()
+        if removed > 0:
+            render_success(f"🧹 Removed {removed} duplicate issue hint(s).")
+        else:
+            render_success("✨ No duplicate issues found.")
 
     else:
         ui.render_issue_dashboard(mgr.get_triplet_count(), mgr.list_all())

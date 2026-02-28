@@ -292,8 +292,13 @@ class MetaRouter:
             desc = dynamic_desc.get(d, "No description available")
             category_lines.append(f"- {d}: {desc}")
         
+        import datetime as dt
+        current_dt = dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %z")
         category_list_str = "\n".join(category_lines)
-        system_prompt = ROUTER_SYSTEM_TEMPLATE.format(category_list=category_list_str)
+        system_prompt = ROUTER_SYSTEM_TEMPLATE.format(
+            category_list=category_list_str,
+            current_datetime=current_dt
+        )
 
         messages = [
             {"role": "system", "content": system_prompt},

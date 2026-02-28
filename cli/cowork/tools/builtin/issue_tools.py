@@ -5,7 +5,7 @@ class RecordIssueSolutionTool(BaseTool):
     """Tool for recording a discovered solution to a tool failure or tricky situation."""
     
     name = "record_issue_solution"
-    description = "Record a solution for an issue or tool error to be used as a hint in future similar failures. Use this when you have managed to resolve a tricky error, tool call argument failure, or situation failure so you remember how to solve it next time."
+    description = "Record a solution for an unexpected tool failure or tricky situation. Use this ONLY when you solved a persistent error or found a non-obvious workaround. Do NOT use this for normal search misses or to just report that a tool returned no results when that is expected."
     category = "SESSION_SCRATCHPAD" # It's an internal / meta tool, so SESSION_SCRATCHPAD fits well
 
     @property

@@ -686,11 +686,14 @@ class GeneralPurposeAgent:
             t.get("function", {}).get("name", "") for t in tools_schema
         ) or "(none)"
 
+        import datetime as dt
+        current_dt = dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %z")
         planner_prompt = PLANNER_SYSTEM_PROMPT.format(
             user_request=user_input,
             tool_names=tool_names,
             memory_context=(memory_context or "(none)")[:600],
             scratchpad_index=(scratchpad_index or "(empty)")[:400],
+            current_datetime=current_dt,
         )
 
         try:
@@ -802,9 +805,12 @@ class GeneralPurposeAgent:
                 break
 
         finding = " | ".join(snippets[:3])[:260] if snippets else (text[:260] if text else "No output.")
-        if "not found" in lowered and status == "ok":
+        is_search = any(x in tool_name.lower() for x in ["search", "find", "list", "grep"])
+        if "not found" in lowered and status == "ok" and not is_search:
             status = "partial"
             next_action = "Validate input/query and retry with adjusted parameters."
+        elif "not found" in lowered and is_search:
+            next_action = "Consider a different search term or check an alternative tool."
 
         if status in ("error", "partial"):
             matches = self.issue_manager.search_issues(f"{tool_name} {finding}")
@@ -961,6 +967,7 @@ class GeneralPurposeAgent:
         max_steps = self.config.get("max_steps", OP_DEFAULTS["max_steps"])
         max_tool_calls = self.config.get("max_total_tool_calls", OP_DEFAULTS["max_total_tool_calls"])
         total_tool_calls = 0
+        self._turn_call_hashes = set()
 
         # ── Phase 1: Input Gatekeeper ─────────────────────────────────────────
         self.status_cb("🛡️  Phase 1 · Input Gatekeeper...")
@@ -1290,16 +1297,20 @@ class GeneralPurposeAgent:
                         break
                     continue
 
-                # ── Loop Detection ──
-                try:
-                    current_hash = hash(json.dumps(tool_calls, sort_keys=True))
-                    if current_hash == last_tool_hash:
-                        repeat_count += 1
-                    else:
-                        repeat_count = 0
-                    last_tool_hash = current_hash
-                except Exception:
-                    pass
+                max_per_step = self.config.get("max_tool_calls_per_step", OP_DEFAULTS["max_tool_calls_per_step"])
+                calls_this_step = tool_calls[:max_per_step]
+
+                # ── Turn-wide Loop Detection ──
+                # Check if we have already called this set of tools in any previous step
+                # of the CURRENT turn.
+                current_hash = hash(json.dumps(calls_this_step, sort_keys=True))
+                turn_call_hashes = getattr(self, "_turn_call_hashes", set())
+                if current_hash in turn_call_hashes:
+                    repeat_count += 1
+                else:
+                    repeat_count = 0
+                turn_call_hashes.add(current_hash)
+                self._turn_call_hashes = turn_call_hashes
 
                 if repeat_count >= 2:
                     self.status_cb("⚠️  Loop detected: repeating tool calls. Breaking.")
@@ -1313,9 +1324,6 @@ class GeneralPurposeAgent:
                     })
                     final_response = content or "I seem to be caught in a loop. Let me know how you'd like to proceed."
                     break
-
-                max_per_step = self.config.get("max_tool_calls_per_step", OP_DEFAULTS["max_tool_calls_per_step"])
-                calls_this_step = tool_calls[:max_per_step]
 
                 self.status_cb(f"⚙️  Executing {len(calls_this_step)} tool(s)...")
                 trace.add_step("tool_calls", {"count": len(calls_this_step), "tools": [tc["function"]["name"] for tc in calls_this_step]})

@@ -80,8 +80,21 @@ class IssueManager:
         self.top_k = 3
         self.min_similarity = 0.5
 
-    def add_issue(self, issue: str, reason: str, solution: str) -> str:
-        """Record a new issue-solution triplet."""
+    def add_issue(self, issue: str, reason: str, solution: str, force_duplicate: bool = False) -> str:
+        """Record a new issue-solution triplet. Prevents exact duplicates by default."""
+        issue = str(issue).strip()
+        reason = str(reason).strip()
+        solution = str(solution).strip()
+
+        if not force_duplicate:
+            # Check for exact duplicate
+            res = self._db.execute(
+                "SELECT id FROM issue_triplets WHERE user_id=? AND issue=? AND reason=? AND solution=?",
+                (self.user_id, issue, reason, solution)
+            ).fetchone()
+            if res:
+                return res["id"]
+
         triplet_id = str(uuid.uuid4())
         
         # We index the problem statement mostly, so we combine issue and reason.
@@ -98,9 +111,9 @@ class IssueManager:
             (
                 triplet_id,
                 self.user_id,
-                str(issue)[:500],
-                str(reason)[:500],
-                str(solution)[:1000],
+                issue[:500],
+                reason[:500],
+                solution[:1000],
                 embedding,
                 datetime.now(timezone.utc).isoformat(),
             ),
@@ -117,6 +130,29 @@ class IssueManager:
 
         self._db.commit()
         return triplet_id
+
+    def compact_duplicates(self) -> int:
+        """Remove duplicate triplets and return the number of deleted items."""
+        rows = self._db.execute(
+            "SELECT id, issue, reason, solution FROM issue_triplets WHERE user_id = ?",
+            (self.user_id,)
+        ).fetchall()
+        
+        seen = set()
+        to_delete = []
+        for row in rows:
+            key = (row["issue"], row["reason"], row["solution"])
+            if key in seen:
+                to_delete.append(row["id"])
+            else:
+                seen.add(key)
+        
+        count = 0
+        for triplet_id in to_delete:
+            if self.delete_issue(triplet_id):
+                count += 1
+        
+        return count
         
     def search_issues(self, query: str) -> List[Dict[str, Any]]:
         """Search for similar errors/issues and return their solutions."""
