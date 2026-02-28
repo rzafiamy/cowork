@@ -135,6 +135,7 @@ class MetaRouter:
             "YOUTUBE": "YOUTUBE_TOOLS",
             "KNOWLEDGE": "KNOWLEDGE_TOOLS",
             "MEDIA": "MEDIA_TOOLS",
+            "MEDIA_AND_ENTERTAINMENT": "MEDIA_TOOLS",
             "SOCIAL": "SOCIAL_TOOLS",
             "GOOGLE": "GOOGLE_TOOLS",
             "COMMUNICATION": "COMMUNICATION_TOOLS",
@@ -435,6 +436,10 @@ class MetaRouter:
         # YouTube & Media
         if any(w in p for w in ["youtube", "yt ", "video transcript", "audio", "vidéo", "transcrire", "speech", "synthèse vocale"]):
             categories.append("YOUTUBE_TOOLS")
+        
+        # Movies & Media Tools
+        if any(w in p for w in ["movie", "cinema", "tmdb", "film", "theaters", "theatre", "showtime", "now playing", "box office"]):
+            categories.append("MEDIA_TOOLS")
         
         # Search & Info
         if any(w in p for w in ["google search", "serpapi", "brave search", "search google", "chercher", "trouver", "recherche", "image search", "find image", "search image"]):

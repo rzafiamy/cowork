@@ -30,7 +30,7 @@ async def handle_acl(
         render_success(f"ACL configuration updated: [dim_text]{ACL_FILE}[/dim_text]")
         return True, None, False
 
-    elif sub == "trace":
+    elif sub in ("trace", "log"):
         limit = 20
         session_only = True
         
@@ -46,7 +46,7 @@ async def handle_acl(
             console.print("[muted]ACL log is empty.[/muted]")
             return True, None, False
 
-        console.print(f"[primary]🗝️  ACL Trace (last {limit} events{' for this session' if session_only else ''})[/primary]")
+        console.print(f"[primary]🗝️  ACL Log (last {limit} events{' for this session' if session_only else ''})[/primary]")
         
         events = []
         try:
@@ -125,5 +125,5 @@ async def handle_acl(
         else:
             console.print("  [dim_text]No explicit rules.[/dim_text]")
         
-        console.print("[dim_text]Use [bold]/acl edit[/bold] to update rules or [bold]/acl trace[/bold] to see logs.[/dim_text]")
+        console.print("[dim_text]Use [bold]/acl edit[/bold] to update rules or [bold]/acl log[/bold] to see audit trails.[/dim_text]")
         return True, None, False

@@ -4,6 +4,9 @@ description: Handle media conversion and entertainment metadata lookups.
 triggers:
   - media
   - movie
+  - film
+  - cinema
+  - theatre
   - tmdb
   - convert
   - video
@@ -17,6 +20,7 @@ permissions:
     - media_convert
     - tmdb_details
     - tmdb_search
+    - tmdb_now_playing
 ---
 # Media Tools Skill
 

@@ -66,8 +66,32 @@ def google_search(
     search_type: str = "",
 ) -> str:
     """Search Google. Uses CSE if available, else SerpAPI."""
+    
+    # Normalize time_range for different providers
+    cse_date_restrict = ""
+    serpapi_tbs = ""
+    
+    if time_range:
+        # Map common keys to provider-specific formats
+        mapping = {
+            "d": ("d1", "qdr:d"),
+            "w": ("w1", "qdr:w"),
+            "m": ("m1", "qdr:m"),
+            "y": ("y1", "qdr:y"),
+            "past_day": ("d1", "qdr:d"),
+            "past_week": ("w1", "qdr:w"),
+            "past_month": ("m1", "qdr:m"),
+            "past_year": ("y1", "qdr:y"),
+        }
+        cse_date_restrict, serpapi_tbs = mapping.get(time_range.lower(), (time_range, time_range))
+
     if _env("GOOGLE_API_KEY") and _env("GOOGLE_SEARCH_ENGINE_ID"):
-        return google_cse_search(query=query, num_results=num_results, search_type=search_type)
+        return google_cse_search(
+            query=query,
+            num_results=num_results,
+            search_type=search_type,
+            date_restrict=cse_date_restrict
+        )
 
     api_key = _env("SERPAPI_KEY")
     if not api_key:
@@ -80,7 +104,7 @@ def google_search(
         "num": min(max(1, num_results), 10),
     }
     if location: params["location"] = location
-    if time_range: params["tbs"] = time_range
+    if serpapi_tbs: params["tbs"] = serpapi_tbs
     if search_type == "image": params["tbm"] = "isch"
 
     url = f"https://serpapi.com/search?{urllib.parse.urlencode(params)}"
@@ -154,6 +178,7 @@ TOOLS = [
                     "query": {"type": "string", "description": "Search query"},
                     "num_results": {"type": "integer", "description": "Number of results"},
                     "search_type": {"type": "string", "description": "Type of search, e.g., 'image'"},
+                    "time_range": {"type": "string", "description": "Time range for results (e.g., 'past_day', 'past_week', 'past_month', 'past_year')"},
                 },
                 "required": ["query"],
             },
@@ -170,6 +195,7 @@ TOOLS = [
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
                     "num_results": {"type": "integer", "description": "Number of results"},
+                    "freshness": {"type": "string", "description": "Freshness of results (e.g., 'past_day', 'past_week', 'past_month', 'past_year')"},
                 },
                 "required": ["query"],
             },

@@ -33,6 +33,7 @@ Rules:
 5. If the task is simple and requires only one tool call or a direct answer, output a
    single step with tool='direct_answer' and rationale explaining why no planning is needed.
 6. Be prescriptive — the executor must follow this plan, so be specific about arguments.
+7. **Recency**: If the user request is time-sensitive (e.g., "latest news", "current version", "today"), explicitly instruct the search tool to use `time_range='past_week'` or similar in the 'action' or 'rationale'.
 
 User request: {user_request}
 
@@ -81,6 +82,7 @@ You are **Cowork**, an enterprise AI coworker.
 - **Safety**: Fail loudly with actionable hints. **NEVER** fabricate results or OS paths.
 - **Formatting**: Use GH-flavored Markdown. Ensure empty lines exist around tables/code blocks.
 - **Precision**: Only share paths relative to the workspace (e.g., `artifacts/report.pdf`).
+- **Recency**: Prioritize up-to-date information. When using search tools for time-sensitive topics (news, tech, etc.), use the `time_range` or `freshness` parameters to ensure results are current.
 - **Artifacts**: If a tool saves a file or generates an artifact (e.g., chart, document, image, audio), you MUST explicitly state the file path or reference name in your final response (e.g., "I have saved the chart to `artifacts/chart_abc.png`").
 
 ## ⏱️ Step Budget
@@ -168,8 +170,7 @@ ROUTER_CATEGORY_DESCRIPTIONS = {
     "WEATHER_TOOLS": "Current weather and forecasts (OpenWeatherMap)",
     "NEWS_TOOLS": "News headlines and article search (NewsAPI)",
     "CODING_TOOLS": "Coding purpose tool (list/read/search/grep/write/github) for web/python/dev tasks",
-    "MEDIA_AND_ENTERTAINMENT": "General images, movies, media",
-    "MEDIA_TOOLS": "Detailed movie/TV info — cast, ratings, plot (TMDB)",
+    "MEDIA_TOOLS": "Detailed movie/TV info — search, cast, ratings, plot, and now playing in theaters (TMDB). Use for any cinema or movie-related questions.",
     "COMMUNICATION_TOOLS": "Email (SMTP), Telegram, Slack, X/Twitter",
     "GOOGLE_TOOLS": "Google Calendar, Drive, Gmail",
     "SOCIAL_TOOLS": "LinkedIn profile/post search",

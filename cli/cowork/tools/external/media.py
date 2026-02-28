@@ -37,6 +37,26 @@ def tmdb_details(tmdb_id: int, media_type: str = "movie") -> str:
     except Exception as e:
         return f"TMDB details failed: {e}"
 
+def tmdb_now_playing(region: str = "") -> str:
+    """Get movies currently in theaters from TMDB."""
+    api_key = _env("TMDB_API_KEY")
+    if not api_key: return _missing_key("tmdb_now_playing", "TMDB_API_KEY")
+
+    params = {"api_key": api_key, "language": "en-US", "page": 1}
+    if region: params["region"] = region
+    url = f"https://api.themoviedb.org/3/movie/now_playing?{urllib.parse.urlencode(params)}"
+
+    try:
+        data = _http_get(url, ttl=_TTL_METADATA)
+        results = data.get("results", [])
+        lines = [f"🎬 **TMDB Now Playing**\n"]
+        for i, res in enumerate(results[:10], 1):
+            date = res.get("release_date", "Unknown")
+            lines.append(f"{i}. **{res.get('title')}** (Released: {date})\n   ID: {res.get('id')} | Rating: {res.get('vote_average')}\n   {res.get('overview')[:120]}...\n")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"TMDB now playing failed: {e}"
+
 TOOLS = [
     {
         "category": "MEDIA_TOOLS",
@@ -67,6 +87,20 @@ TOOLS = [
                     "media_type": {"type": "string", "enum": ["movie", "tv"]},
                 },
                 "required": ["tmdb_id"],
+            },
+        },
+    },
+    {
+        "category": "MEDIA_TOOLS",
+        "type": "function",
+        "function": {
+            "name": "tmdb_now_playing",
+            "description": "Get a list of movies currently in the cinema/theaters (Now Playing).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "region": {"type": "string", "description": "Optional ISO 3166-1 country code (e.g. 'US', 'FR')"},
+                },
             },
         },
     },

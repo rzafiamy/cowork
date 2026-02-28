@@ -11,6 +11,7 @@ def newsapi_headlines(
     category: str = "",
     country: str = "us",
     max_results: int = 5,
+    days: int = 0,
 ) -> str:
     """Fetch top news headlines using NewsAPI."""
     api_key = _env("NEWSAPI_KEY")
@@ -20,6 +21,11 @@ def newsapi_headlines(
     if query:
         endpoint = "https://newsapi.org/v2/everything"
         params["q"] = query
+        if days > 0:
+            import datetime
+            from_date = (datetime.datetime.now() - datetime.timedelta(days=days)).strftime("%Y-%m-%d")
+            params["from"] = from_date
+            params["sortBy"] = "publishedAt"
     else:
         endpoint = "https://newsapi.org/v2/top-headlines"
         params["country"] = country
@@ -50,6 +56,7 @@ TOOLS = [
                 "properties": {
                     "query": {"type": "string", "description": "Search keyword"},
                     "category": {"type": "string", "description": "News category"},
+                    "days": {"type": "integer", "description": "Number of days back to search (e.g., 7 for past week). Only for queried search."},
                 },
                 "required": [],
             },

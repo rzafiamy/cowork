@@ -64,6 +64,7 @@ KEY_REQUIREMENTS: dict[str, str | list[str] | dict[str, list[str]] | None] = {
     "openweather_forecast": "OPENWEATHER_API_KEY",
     "tmdb_search":          "TMDB_API_KEY",
     "tmdb_details":         "TMDB_API_KEY",
+    "tmdb_now_playing":     "TMDB_API_KEY",
     "wikipedia_search":     None,
     "wikipedia_article":    None,
     "smtp_send_email":      "SMTP_PASS",
