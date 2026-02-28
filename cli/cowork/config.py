@@ -163,7 +163,10 @@ class ConfigManager:
         if os.getenv("COWORK_API_ENDPOINT"):
             self._data["api_endpoint"] = os.getenv("COWORK_API_ENDPOINT", "")
         if os.getenv("COWORK_MODEL"):
-            self._data["model_text"] = os.getenv("COWORK_MODEL", "")
+            model = os.getenv("COWORK_MODEL", "")
+            self._data["model_text"] = model
+            self._data["model_router"] = model
+            self._data["model_compress"] = model
 
         # ── Multi-Modal (MM) service overrides from environment ──
         for k in self._data:
@@ -192,6 +195,17 @@ class ConfigManager:
 
     def set(self, key: str, value: Any) -> None:
         self._data[key] = value
+        self.save()
+
+    def set_core_models(self, model: str) -> None:
+        """Update core text-based model configuration keys (text, router, compress)."""
+        keys = [
+            "model_text",
+            "model_router",
+            "model_compress",
+        ]
+        for k in keys:
+            self._data[k] = model
         self.save()
 
     def all(self) -> dict[str, Any]:
@@ -875,9 +889,7 @@ class AIProfileManager:
         self._save()
         # Apply to live config
         self.config.set("api_endpoint", profile.endpoint)
-        self.config.set("model_text", profile.model)
-        self.config.set("model_router", profile.model)
-        self.config.set("model_compress", profile.model)
+        self.config.set_core_models(profile.model)
         if profile.api_key:
             self.config.set("api_key", profile.api_key)
         return profile

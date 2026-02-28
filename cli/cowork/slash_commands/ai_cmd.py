@@ -13,6 +13,7 @@ from ..ui import (
     ThinkingSpinner,
     console,
     render_ai_profiles,
+    render_current_models,
     render_error,
     render_model_list,
     render_success,
@@ -91,16 +92,21 @@ async def handle_model(
 ) -> tuple[bool, Optional[Session], bool]:
     """Handle /model command."""
     if len(parts) > 1:
+        sub = parts[1].lower()
+        if sub == "list":
+            with ThinkingSpinner("Fetching models"):
+                models = await api_client.list_models()
+            render_model_list(models, _config.model_text)
+            return True, None, False
+
         new_model = parts[1]
-        _config.set("model_text", new_model)
-        _config.set("model_router", new_model)
-        _config.set("model_compress", new_model)
-        render_success(f"🤖 Model switched to: [highlight]{new_model}[/highlight]")
+        _config.set_core_models(new_model)
+
+        render_success(f"🤖 Core models (text, router, compress) switched to: [highlight]{new_model}[/highlight]")
         return True, None, True  # needs_rebuild = True
     else:
-        with ThinkingSpinner("Fetching models"):
-            models = await api_client.list_models()
-        render_model_list(models, _config.model_text)
+        # Show current configuration
+        render_current_models(_config.all())
 
     return True, None, False
 

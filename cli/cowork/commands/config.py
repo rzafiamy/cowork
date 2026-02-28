@@ -20,9 +20,8 @@ def config(set_values: tuple, model_all: str | None) -> None:
     """Show or update configuration."""
     print_banner()
     if model_all:
-        for key in ["model_text", "model_router", "model_compress"]:
-            _config.set(key, model_all)
-            render_success(f"Set {key} = {model_all}")
+        _config.set_core_models(model_all)
+        render_success(f"🤖 Core models (text, router, compress) switched to: [highlight]{model_all}[/highlight]")
 
     if set_values:
         for key, value in set_values:

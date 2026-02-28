@@ -923,7 +923,39 @@ def render_model_list(models: list[str], current_model: str) -> None:
         table.add_row(active, m)
 
     console.print(table)
-    console.print(f"  [dim_text]Use [highlight]/model <id>[/highlight] to switch models.[/dim_text]")
+    console.print(f"  [dim_text]Use [highlight]/model <id>[/highlight] to switch all models.[/dim_text]")
+
+
+def render_current_models(config_data: dict) -> None:
+    """Render a table of currently configured models for various purposes."""
+    table = Table(
+        title="🤖 Current Model Configuration",
+        box=box.ROUNDED,
+        border_style="primary",
+        header_style="primary",
+        show_lines=False,
+    )
+    table.add_column("Purpose", style="highlight", min_width=20)
+    table.add_column("Model ID", style="text")
+
+    # Groups
+    groups = [
+        ("Main Text", "model_text"),
+        ("Router", "model_router"),
+        ("Compress", "model_compress"),
+        ("Vision", "mm_vision_model"),
+        ("Images", "mm_image_model"),
+        ("ASR (Speech-to-Text)", "mm_asr_model"),
+        ("TTS (Text-to-Speech)", "mm_tts_model"),
+    ]
+
+    for label, key in groups:
+        val = str(config_data.get(key, "")).strip() or "[muted]—[/muted]"
+        table.add_row(label, val)
+
+    console.print(table)
+    console.print(f"  [dim_text]Use [highlight]/model list[/highlight] to see available models.[/dim_text]")
+    console.print(f"  [dim_text]Use [highlight]/model <id>[/highlight] to switch all models.[/dim_text]")
 
 
 def render_tools_list(tools: list[dict]) -> None:
@@ -1253,8 +1285,9 @@ SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/ai switch ",              "Switch to a profile  e.g. /ai switch gpt4"),
     ("/ai remove ",              "Remove a profile  e.g. /ai remove gpt4"),
     ("/ai save ",                "Save current config as profile  e.g. /ai save myprofile"),
-    ("/model",                   "List available AI models on current endpoint"),
-    ("/model <name>",            "Switch to a specific AI model"),
+    ("/model",                   "Show currently configured models for all purposes"),
+    ("/model <name>",            "Switch core config models (text, router, compress) to <name>"),
+    ("/model list",              "List available AI models on current endpoint"),
     ("/scratchpad",              "List scratchpad contents for this session"),
     ("/scratchpad read ",        "Read scratchpad item  e.g. /scratchpad read 2"),
     ("/tools",                   "List all active tools (built-in + configured)"),
